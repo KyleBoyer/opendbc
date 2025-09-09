@@ -42,7 +42,7 @@ class CarInterface(CarInterfaceBase):
     else:
       CarInterfaceBase.configure_torque_tune(candidate, ret.lateralTuning)
 
-    if candidate in (CAR.SUBARU_ASCENT, CAR.SUBARU_ASCENT_2023):
+    if candidate in (CAR.SUBARU_ASCENT, CAR.SUBARU_ASCENT_2023, CAR.SUBARU_ASCENT_2024):
       ret.steerActuatorDelay = 0.3  # end-to-end angle controller
       ret.lateralTuning.init('pid')
       ret.lateralTuning.pid.kf = 0.00003
