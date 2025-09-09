@@ -211,6 +211,11 @@ class CAR(Platforms):
     SUBARU_ASCENT.specs,
     flags=SubaruFlags.LKAS_ANGLE,
   )
+  SUBARU_ASCENT_2024 = SubaruGen2PlatformConfig(
+    [SubaruCarDocs("Subaru Ascent 2024", "All", car_parts=CarParts.common([CarHarness.subaru_d]))],
+    SUBARU_ASCENT.specs,
+    flags=SubaruFlags.LKAS_ANGLE,
+  )
 
 
 SUBARU_VERSION_REQUEST = bytes([uds.SERVICE_TYPE.READ_DATA_BY_IDENTIFIER]) + \
