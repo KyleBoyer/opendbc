@@ -115,34 +115,34 @@ def match_fw_to_car_exact(live_fw_versions: LiveFwVersions, match_brand: str = N
 
   for candidate, fws in candidates.items():
     config = FW_QUERY_CONFIGS[MODEL_TO_BRAND[candidate]]
-    carlog.error({"event": "FW exact match attempt", "candidate": candidate, "fw": fws, "live_fw": live_fw_versions})
+    carlog.error({"event": "FW exact match attempt", "candidate": repr(candidate), "fw": repr(fws), "live_fw": repr(live_fw_versions)})
     for ecu, expected_versions in fws.items():
       expected_versions = expected_versions + extra_fw_versions.get(candidate, {}).get(ecu, [])
       ecu_type = ecu[0]
       addr = ecu[1:]
 
       found_versions = live_fw_versions.get(addr, set())
-      carlog.error({"event": "FW exact match ecu", "candidate": candidate, "ecu": ecu, "expected_versions": expected_versions, "found_versions": list(found_versions)})
+      carlog.error({"event": "FW exact match ecu", "candidate": repr(candidate), "ecu": repr(ecu), "expected_versions": repr(expected_versions), "found_versions": list(found_versions)})
       if not len(found_versions):
         # Some models can sometimes miss an ecu, or show on two different addresses
         # FIXME: this logic can be improved to be more specific, should require one of the two addresses
         if candidate in config.non_essential_ecus.get(ecu_type, []):
-          carlog.error({"event": "FW exact match skipping non essential ecu", "candidate": candidate, "ecu": ecu})
+          carlog.error({"event": "FW exact match skipping non essential ecu", "candidate": repr(candidate), "ecu": repr(ecu)})
           continue
 
         # Ignore non essential ecus
         if ecu_type not in ESSENTIAL_ECUS:
-          carlog.error({"event": "FW exact match skipping non essential ecu", "candidate": candidate, "ecu": ecu})
+          carlog.error({"event": "FW exact match skipping non essential ecu", "candidate": repr(candidate), "ecu": repr(ecu)})
           continue
 
       # Virtual debug ecu doesn't need to match the database
       if ecu_type == Ecu.debug:
-        carlog.error({"event": "FW exact match skipping debug ecu", "candidate": candidate, "ecu": ecu})
+        carlog.error({"event": "FW exact match skipping debug ecu", "candidate": repr(candidate), "ecu": repr(ecu)})
         continue
 
       if not any(found_version in expected_versions for found_version in found_versions):
         invalid.add(candidate)
-        carlog.error({"event": "FW exact match failed", "candidate": candidate, "ecu": ecu, "expected_versions": expected_versions, "found_versions": list(found_versions)})
+        carlog.error({"event": "FW exact match failed", "candidate": repr(candidate), "ecu": repr(ecu), "expected_versions": repr(expected_versions), "found_versions": list(found_versions)})
         break
 
   carlog.error({"event": "FW exact match results", "candidates": list(candidates.keys()), "invalid": list(invalid), "valid": list(set(candidates.keys()) - invalid)})
@@ -164,16 +164,16 @@ def match_fw_to_car(fw_versions: list[CarParams.CarFw], vin: str, allow_exact: b
     for brand in VERSIONS.keys():
       fw_versions_dict = build_fw_dict(fw_versions, filter_brand=brand)
       matches |= match_func(fw_versions_dict, match_brand=brand, log=log)
-      carlog.error({ "event": "FW match attempt", "brand": brand, "exact": exact_match, "matches": list(matches), "fw": fw_versions_dict })
+      carlog.error({ "event": "FW match attempt", "brand": repr(brand), "exact": repr(exact_match), "matches": list(matches), "fw": repr(fw_versions_dict) })
 
       # If specified and no matches so far, fall back to brand's fuzzy fingerprinting function
       config = FW_QUERY_CONFIGS[brand]
       if not exact_match and not len(matches) and config.match_fw_to_car_fuzzy is not None:
         matches |= config.match_fw_to_car_fuzzy(fw_versions_dict, vin, VERSIONS[brand])
-        carlog.error({ "event": "FW fuzzy match attempt", "brand": brand, "matches": list(matches), "fw": fw_versions_dict })
+        carlog.error({ "event": "FW fuzzy match attempt", "brand": repr(brand), "matches": list(matches), "fw": repr(fw_versions_dict) })
 
     if len(matches):
-      carlog.error({"event": "FW matched", "exact": exact_match, "matches": list(matches)})
+      carlog.error({"event": "FW matched", "exact": repr(exact_match), "matches": list(matches)})
       return exact_match, matches
 
   return True, set()
