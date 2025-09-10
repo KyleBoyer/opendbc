@@ -114,6 +114,8 @@ def match_fw_to_car_exact(live_fw_versions: LiveFwVersions, match_brand: str = N
                 is_brand(MODEL_TO_BRAND[c], match_brand)}
 
   for candidate, fws in candidates.items():
+    if "ascent" not in repr(candidate).lower() or "subaru" not in repr(candidate).lower():
+      continue
     config = FW_QUERY_CONFIGS[MODEL_TO_BRAND[candidate]]
     carlog.error({"event": "FW exact match attempt", "candidate": repr(candidate), "fw": repr(fws), "live_fw": repr(live_fw_versions)})
     for ecu, expected_versions in fws.items():
