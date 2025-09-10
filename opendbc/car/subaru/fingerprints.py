@@ -58,10 +58,10 @@ FW_VERSIONS = {
     (Ecu.eps, 0x746, None): [ # good
       b'%\xc0\xd0\x11',
     ],
-    # (Ecu.fwdCamera, 0x787, None): [
-    #   b'\x05!\x08\x1eL\x0e!\x08\x018',
-    #   b' \x02\x0e',
-    # ],
+    (Ecu.fwdCamera, 0x787, None): [
+      b'\x05!\x08\x1eL\x0e!\x08\x018',
+      b' \x02\x0e',
+    ],
     (Ecu.engine, 0x7a2, None): [ # good
       b'\xfe,\xa0p\x07',
     ],
@@ -75,9 +75,9 @@ FW_VERSIONS = {
     #   b'\xf1\x00\xac\x04\x00',
     #   b'q\x04\x1b\x00\x02'
     # ],
-    (Ecu.adas, 0x730, None): [
-      b'\xf1\x00\xbb\x0f\x07',
-    ],
+    # (Ecu.adas, 0x730, None): [
+    #   b'\xf1\x00\xbb\x0f\x07',
+    # ],
   },
   CAR.SUBARU_LEGACY: {
     (Ecu.abs, 0x7b0, None): [
