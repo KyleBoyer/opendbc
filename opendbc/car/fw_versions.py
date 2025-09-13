@@ -166,7 +166,7 @@ def match_fw_to_car(fw_versions: list[CarParams.CarFw], vin: str, allow_exact: b
     for brand in VERSIONS.keys():
       fw_versions_dict = build_fw_dict(fw_versions, filter_brand=brand)
       matches |= match_func(fw_versions_dict, match_brand=brand, log=log)
-      carlog.error({ "event": "FW match attempt", "brand": repr(brand), "exact": repr(exact_match), "matches": list(matches), "fw": repr(fw_versions_dict) })
+      carlog.error({ "event": "FW match attempt", "brand": repr(brand), "exact": repr(exact_match), "matches": list(matches), "fw_raw": repr(fw_versions), "fw_filtered": repr(fw_versions_dict) })
 
       # If specified and no matches so far, fall back to brand's fuzzy fingerprinting function
       config = FW_QUERY_CONFIGS[brand]
