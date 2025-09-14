@@ -1,4 +1,5 @@
 # functions common among cars
+from collections import namedtuple
 import numpy as np
 from dataclasses import dataclass, field
 from enum import IntFlag, ReprEnum, StrEnum, EnumType, auto
@@ -16,6 +17,7 @@ STD_CARGO_KG = 136.
 ACCELERATION_DUE_TO_GRAVITY = 9.81  # m/s^2
 
 ButtonType = structs.CarState.ButtonEvent.Type
+AngleRateLimit = namedtuple('AngleRateLimit', ['speed_bp', 'angle_v'])
 
 
 def apply_hysteresis(val: float, val_steady: float, hyst_gap: float) -> float:

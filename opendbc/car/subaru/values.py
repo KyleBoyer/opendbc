@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from enum import Enum, IntFlag
 
-from opendbc.car import Bus, CarSpecs, DbcDict, PlatformConfig, Platforms, uds
+from opendbc.car import Bus, CarSpecs, DbcDict, PlatformConfig, Platforms, uds, AngleRateLimit
 from opendbc.car.structs import CarParams
 from opendbc.car.docs_definitions import CarFootnote, CarHarness, CarDocs, CarParts, Column
 from opendbc.car.fw_query_definitions import FwQueryConfig, Request, StdQueries, p16
@@ -18,16 +18,20 @@ class CarControllerParams:
     self.STEER_DRIVER_MULTIPLIER = 50  # weight driver torque heavily
     self.STEER_DRIVER_FACTOR = 1       # from dbc
 
-    if CP.flags & SubaruFlags.GLOBAL_GEN2:
-      # TODO: lower rate limits, this reaches min/max in 0.5s which negatively affects tuning
-      self.STEER_MAX = 1000
-      self.STEER_DELTA_UP = 40
-      self.STEER_DELTA_DOWN = 40
-    elif CP.carFingerprint == CAR.SUBARU_IMPREZA_2020:
-      self.STEER_DELTA_UP = 35
-      self.STEER_MAX = 1439
+    if CP.flags & SubaruFlags.LKAS_ANGLE:
+      self.ANGLE_RATE_LIMIT_UP = AngleRateLimit(speed_bp=[0.], angle_v=[1.])
+      self.ANGLE_RATE_LIMIT_DOWN = AngleRateLimit(speed_bp=[0.], angle_v=[1.])
     else:
-      self.STEER_MAX = 2047
+      if CP.flags & SubaruFlags.GLOBAL_GEN2:
+        # TODO: lower rate limits, this reaches min/max in 0.5s which negatively affects tuning
+        self.STEER_MAX = 1000
+        self.STEER_DELTA_UP = 40
+        self.STEER_DELTA_DOWN = 40
+      elif CP.carFingerprint == CAR.SUBARU_IMPREZA_2020:
+        self.STEER_DELTA_UP = 35
+        self.STEER_MAX = 1439
+      else:
+        self.STEER_MAX = 2047
 
   THROTTLE_MIN = 808
   THROTTLE_MAX = 3400
