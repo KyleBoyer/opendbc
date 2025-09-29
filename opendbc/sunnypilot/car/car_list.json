@@ -2721,6 +2721,16 @@
     ],
     "package": "All"
   },
+  "Subaru Ascent 2023": {
+    "platform": "SUBARU_ASCENT_2023",
+    "make": "Subaru",
+    "brand": "subaru",
+    "model": "Ascent",
+    "year": [
+      "2023"
+    ],
+    "package": "All"
+  },
   "Subaru Crosstrek 2018-19": {
     "platform": "SUBARU_IMPREZA",
     "make": "Subaru",
@@ -2765,6 +2775,18 @@
       "2019",
       "2020",
       "2021"
+    ],
+    "package": "All"
+  },
+  "Subaru Forester 2022-24": {
+    "platform": "SUBARU_FORESTER_2022",
+    "make": "Subaru",
+    "brand": "subaru",
+    "model": "Forester",
+    "year": [
+      "2022",
+      "2023",
+      "2024"
     ],
     "package": "All"
   },
@@ -2849,6 +2871,16 @@
       "2020",
       "2021",
       "2022"
+    ],
+    "package": "All"
+  },
+  "Subaru Outback 2023": {
+    "platform": "SUBARU_OUTBACK_2023",
+    "make": "Subaru",
+    "brand": "subaru",
+    "model": "Outback",
+    "year": [
+      "2023"
     ],
     "package": "All"
   },
