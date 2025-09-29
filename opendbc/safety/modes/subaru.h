@@ -126,13 +126,13 @@ static void subaru_rx_hook(const CANPacket_t *msg) {
   if (subaru_lkas_angle) {
     // LKAS Angle cars use different message
     if ((msg->addr == MSG_SUBARU_ES_DashStatus) && (msg->bus == SUBARU_CAM_BUS)) {
-      bool cruise_engaged = GET_BIT(to_push, 36U);
+      bool cruise_engaged = GET_BIT(msg, 36U);
       pcm_cruise_check(cruise_engaged);
       acc_main_on = GET_BIT(msg, 40U);
     }
   } else {
     if ((msg->addr == MSG_SUBARU_CruiseControl) && (msg->bus == alt_main_bus)) {
-      bool cruise_engaged = GET_BIT(to_push, 41U);
+      bool cruise_engaged = GET_BIT(msg, 41U);
       pcm_cruise_check(cruise_engaged);
       acc_main_on = GET_BIT(msg, 40U);
     }
