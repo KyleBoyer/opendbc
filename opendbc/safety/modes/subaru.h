@@ -200,7 +200,7 @@ static bool subaru_tx_hook(const CANPacket_t *msg) {
     violation |= steer_torque_cmd_checks(desired_torque, steer_req, limits);
   }
 
-  if (addr == MSG_SUBARU_ES_LKAS_ANGLE) {
+  if (msg->addr == MSG_SUBARU_ES_LKAS_ANGLE) {
     int desired_angle = GET_BYTES(msg, 5, 3) & 0x1FFFFU;
     desired_angle = -1 * to_signed(desired_angle, 17);
     bool lkas_request = GET_BIT(msg, 12U);
