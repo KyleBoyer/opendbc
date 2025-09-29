@@ -125,13 +125,13 @@ static void subaru_rx_hook(const CANPacket_t *msg) {
   // enter controls on rising edge of ACC, exit controls on ACC off
   if (subaru_lkas_angle) {
     // LKAS Angle cars use different message
-    if ((addr == MSG_SUBARU_ES_DashStatus) && (bus == SUBARU_CAM_BUS)) {
+    if ((msg->addr == MSG_SUBARU_ES_DashStatus) && (msg->bus == SUBARU_CAM_BUS)) {
       bool cruise_engaged = GET_BIT(to_push, 36U);
       pcm_cruise_check(cruise_engaged);
       acc_main_on = GET_BIT(msg, 40U);
     }
   } else {
-    if ((addr == MSG_SUBARU_CruiseControl) && (bus == alt_main_bus)) {
+    if ((msg->addr == MSG_SUBARU_CruiseControl) && (msg->bus == alt_main_bus)) {
       bool cruise_engaged = GET_BIT(to_push, 41U);
       pcm_cruise_check(cruise_engaged);
       acc_main_on = GET_BIT(msg, 40U);
