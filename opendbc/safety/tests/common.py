@@ -709,7 +709,8 @@ class AngleSteeringSafetyTest(VehicleSpeedSafetyTest):
     # TODO: what should CANPacker do here? we should also have good coverage checks on this
     if self.STEER_ANGLE_TEST_MAX is None:
         self.STEER_ANGLE_TEST_MAX = self.STEER_ANGLE_MAX * 2
-    angles = np.concatenate((np.arange(-self.STEER_ANGLE_TEST_MAX, self.STEER_ANGLE_TEST_MAX, 5), [0]))
+    angle_max_abs = self.STEER_ANGLE_MAX + 10
+    angles = np.concatenate((np.arange(-angle_max_abs, angle_max_abs, 5), [0]))
     for a in angles:
       for s in speeds:
         max_delta_up = np.interp(s, self.ANGLE_RATE_BP, self.ANGLE_RATE_UP)
@@ -908,6 +909,10 @@ class PandaSafetyTest(PandaSafetyTestBase):
             # overlapping TX addrs, but they're not actuating messages for either car
             if attr == 'TestHyundaiCanfdLKASteeringLongEV' and current_test.startswith('TestToyota'):
               tx = list(filter(lambda m: m[0] not in [0x160, ], tx))
+
+            # Rivian message overlaps with Subaru LKAS Angle ES_DashStatus message
+            if attr.startswith('TestRivian') and current_test.startswith('TestSubaruGen2Angle'):
+              tx = list(filter(lambda m: m[0] not in [0x321, ], tx))
 
             # Volkswagen MQB longitudinal actuating message overlaps with the Subaru lateral actuating message
             if attr == 'TestVolkswagenMqbLongSafety' and current_test.startswith('TestSubaru'):
