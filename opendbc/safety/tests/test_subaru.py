@@ -186,6 +186,7 @@ class TestSubaruTorqueSafetyBase(TestSubaruSafetyBase, common.DriverTorqueSteeri
     values = {"LKAS_Output": torque, "LKAS_Request": steer_req}
     return self.packer.make_can_msg_panda("ES_LKAS", SUBARU_MAIN_BUS, values)
 
+
 class TestSubaruAngleSafetyBase(TestSubaruSafetyBase, common.AngleSteeringSafetyTest):
   ALT_MAIN_BUS = SUBARU_ALT_BUS
 
@@ -218,6 +219,7 @@ class TestSubaruAngleSafetyBase(TestSubaruSafetyBase, common.AngleSteeringSafety
   def _pcm_status_msg(self, enable):
     values = {"Cruise_Activated": enable}
     return self.packer.make_can_msg_panda("ES_DashStatus", self.ALT_CAM_BUS, values)
+
 
 class TestSubaruGen1TorqueStockLongitudinalSafety(TestSubaruStockLongitudinalSafetyBase, TestSubaruTorqueSafetyBase):
   FLAGS = 0
