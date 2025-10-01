@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - master
+      - master-tici
+      - bravo
+      - bravochar
   pull_request:
 
 jobs:
