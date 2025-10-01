@@ -204,7 +204,7 @@ class CAR(Platforms):
     flags=SubaruFlags.PREGLOBAL,
   )
   # Angle LKAS
-  SUBARU_FORESTER_2022 = SubaruPlatformConfig(
+  SUBARU_FORESTER_2022 = SubaruGen2PlatformConfig(
     [SubaruCarDocs("Subaru Forester 2022-24", "All", car_parts=CarParts.common([CarHarness.subaru_c]))],
     SUBARU_FORESTER.specs,
     flags=SubaruFlags.LKAS_ANGLE,

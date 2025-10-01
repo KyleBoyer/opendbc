@@ -2721,13 +2721,14 @@
     ],
     "package": "All"
   },
-  "Subaru Ascent 2023": {
+  "Subaru Ascent 2023-24": {
     "platform": "SUBARU_ASCENT_2023",
     "make": "Subaru",
     "brand": "subaru",
     "model": "Ascent",
     "year": [
-      "2023"
+      "2023",
+      "2024"
     ],
     "package": "All"
   },
