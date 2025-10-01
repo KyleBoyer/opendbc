@@ -26,6 +26,7 @@ non_tested_cars = [
   HYUNDAI.GENESIS_G90,
   VOLKSWAGEN.VOLKSWAGEN_CRAFTER_MK2,  # need a route from an ACC-equipped Crafter
   SUBARU.SUBARU_FORESTER_HYBRID,
+  SUBARU.SUBARU_FORESTER_2022,
   HONDA.HONDA_CRV_6G,
 
   # port extensions
@@ -307,7 +308,7 @@ routes = [
   CarTestRoute("1bbe6bf2d62f58a8/2022-07-14--17-11-43", SUBARU.SUBARU_OUTBACK, segment=10),
   CarTestRoute("c56e69bbc74b8fad/2022-08-18--09-43-51", SUBARU.SUBARU_LEGACY, segment=3),
   CarTestRoute("f4e3a0c511a076f4/2022-08-04--16-16-48", SUBARU.SUBARU_CROSSTREK_HYBRID, segment=2),
-  CarTestRoute("7fd1e4f3a33c1673/2022-12-04--15-09-53", SUBARU.SUBARU_FORESTER_2022, segment=4),
+  # CarTestRoute("7fd1e4f3a33c1673/2022-12-04--15-09-53", SUBARU.SUBARU_FORESTER_2022, segment=4), # gen1 angle steering
   CarTestRoute("f3b34c0d2632aa83/2023-07-23--20-43-25", SUBARU.SUBARU_OUTBACK_2023, segment=7),
   CarTestRoute("99437cef6d5ff2ee/2023-03-13--21-21-38", SUBARU.SUBARU_ASCENT_2023, segment=7),
   # Pre-global, dashcam
