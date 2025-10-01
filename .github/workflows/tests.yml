@@ -77,8 +77,8 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        repository: 'sunnypilot/sunnypilot'
-        ref: 'master'
+        repository: 'KyleBoyer/openpilot'
+        ref: 'master-tici'
         submodules: true
     - run: rm -rf opendbc_repo/
     - uses: actions/checkout@v4
