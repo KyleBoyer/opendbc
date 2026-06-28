@@ -130,7 +130,7 @@ static void subaru_rx_hook(const CANPacket_t *msg) {
       // bool cruise_engaged = GET_BIT(msg, 36U);
       bool cruise_engaged = (msg->data[4] >> 4) & 1U;
       pcm_cruise_check(cruise_engaged);
-      acc_main_on = GET_BIT(msg, 40U);
+      acc_main_on = GET_BIT(msg, 49U);
     }
   } else {
     if ((msg->addr == MSG_SUBARU_CruiseControl) && (msg->bus == alt_main_bus)) {

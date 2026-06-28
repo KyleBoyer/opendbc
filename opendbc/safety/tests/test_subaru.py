@@ -220,6 +220,19 @@ class TestSubaruAngleSafetyBase(TestSubaruSafetyBase, common.AngleSteeringSafety
     values = {"Cruise_Activated": enable}
     return self.packer.make_can_msg_panda("ES_DashStatus", self.ALT_CAM_BUS, values)
 
+  def _acc_state_msg(self, enabled, cruise_set_speed=0):
+    values = {"Cruise_On": enabled, "Cruise_Set_Speed": cruise_set_speed}
+    return self.packer.make_can_msg_panda("ES_DashStatus", self.ALT_CAM_BUS, values)
+
+  def test_acc_main_ignores_cruise_set_speed(self):
+    self.safety.set_mads_params(True, False, False)
+
+    # Cruise_Set_Speed occupies bits 40-47. Changing between odd and even
+    # speeds must not be interpreted as ACC Main toggling.
+    for cruise_set_speed in range(41, 52):
+      self._rx(self._acc_state_msg(True, cruise_set_speed))
+      self.assertTrue(self.safety.get_controls_allowed_lat())
+
 
 class TestSubaruGen1TorqueStockLongitudinalSafety(TestSubaruStockLongitudinalSafetyBase, TestSubaruTorqueSafetyBase):
   FLAGS = 0
