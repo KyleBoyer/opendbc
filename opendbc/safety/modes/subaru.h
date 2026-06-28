@@ -23,6 +23,7 @@
 #define MSG_SUBARU_CruiseControl         0x240U
 #define MSG_SUBARU_Throttle              0x40U
 #define MSG_SUBARU_Steering_Torque       0x119U
+#define MSG_SUBARU_Steering_2            0x11aU
 #define MSG_SUBARU_Wheel_Speeds          0x13aU
 
 #define MSG_SUBARU_ES_LKAS               0x122U
@@ -75,6 +76,7 @@
 #define SUBARU_LKAS_ANGLE_RX_CHECKS(alt_bus)                                                                            \
   {.msg = {{MSG_SUBARU_Throttle,        SUBARU_MAIN_BUS, 8, 100U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}}, \
   {.msg = {{MSG_SUBARU_Steering_Torque, SUBARU_MAIN_BUS, 8, 50U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
+  {.msg = {{MSG_SUBARU_Steering_2,      SUBARU_MAIN_BUS, 8, 50U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
   {.msg = {{MSG_SUBARU_Wheel_Speeds,    alt_bus,         8, 50U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
   {.msg = {{MSG_SUBARU_Brake_Status,    alt_bus,         8, 50U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
   {.msg = {{MSG_SUBARU_ES_Brake,        alt_bus,         8, 20U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},  \
@@ -111,9 +113,19 @@ static void subaru_rx_hook(const CANPacket_t *msg) {
     torque_driver_new = -1 * to_signed(torque_driver_new, 11);
     update_sample(&torque_driver, torque_driver_new);
 
-    int angle_meas_new = (GET_BYTES(msg, 4, 2) & 0xFFFFU);
-    // convert Steering_Torque -> Steering_Angle to centidegrees, to match the ES_LKAS_ANGLE angle request units
-    angle_meas_new = ROUND(to_signed(angle_meas_new, 16) * -2.17);
+    // LKAS_ANGLE cars use Steering_2 for angle measurement; Steering_Torque angle is zero on newer variants
+    if (!subaru_lkas_angle) {
+      int angle_meas_new = (GET_BYTES(msg, 4, 2) & 0xFFFFU);
+      // convert Steering_Torque -> Steering_Angle to centidegrees, to match the ES_LKAS_ANGLE angle request units
+      angle_meas_new = ROUND(to_signed(angle_meas_new, 16) * -2.17);
+      update_sample(&angle_meas, angle_meas_new);
+    }
+  }
+
+  // For LKAS_ANGLE cars, Steering_2 carries the actual angle in the same units as ES_LKAS_ANGLE (0.01 deg/LSB)
+  if ((msg->addr == MSG_SUBARU_Steering_2) && (msg->bus == SUBARU_MAIN_BUS) && subaru_lkas_angle) {
+    int angle_meas_new = (GET_BYTES(msg, 3, 3) & 0x1FFFFU);
+    angle_meas_new = -1 * to_signed(angle_meas_new, 17);
     update_sample(&angle_meas, angle_meas_new);
   }
 

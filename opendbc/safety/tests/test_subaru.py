@@ -15,6 +15,7 @@ class SubaruMsg(enum.IntEnum):
   CruiseControl     = 0x240
   Throttle          = 0x40
   Steering_Torque   = 0x119
+  Steering_2        = 0x11a
   Wheel_Speeds      = 0x13a
   ES_LKAS           = 0x122
   ES_LKAS_ANGLE     = 0x124
@@ -207,8 +208,9 @@ class TestSubaruAngleSafetyBase(TestSubaruSafetyBase, common.AngleSteeringSafety
     return self.packer.make_can_msg_panda("ES_LKAS_ANGLE", SUBARU_MAIN_BUS, values)
 
   def _angle_meas_msg(self, angle):
+    # LKAS_ANGLE cars carry the steering angle in Steering_2 (same 0.01 deg/LSB encoding as ES_LKAS_ANGLE)
     values = {"Steering_Angle": angle}
-    return self.packer.make_can_msg_panda("Steering_Torque", SUBARU_MAIN_BUS, values)
+    return self.packer.make_can_msg_panda("Steering_2", SUBARU_MAIN_BUS, values)
 
   def _speed_msg(self, speed):
     # convert meters-per-second to kilometers per hour for message
