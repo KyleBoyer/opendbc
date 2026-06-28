@@ -217,7 +217,7 @@ class TestSubaruAngleSafetyBase(TestSubaruSafetyBase, common.AngleSteeringSafety
 
   def _pcm_status_msg(self, enable):
     values = {"Cruise_Activated": enable}
-    return self.packer.make_can_msg_panda("ES_Status", self.ALT_MAIN_BUS, values)
+    return self.packer.make_can_msg_panda("ES_Brake", self.ALT_MAIN_BUS, values)
 
   def _acc_state_msg(self, enabled, cruise_set_speed=0):
     values = {"Cruise_On": enabled, "Cruise_Set_Speed": cruise_set_speed}
@@ -237,7 +237,7 @@ class TestSubaruAngleSafetyBase(TestSubaruSafetyBase, common.AngleSteeringSafety
     self.assertTrue(self.safety.get_controls_allowed())
 
     # The dash-only activation signal falls during gas override, while
-    # ES_Status continues to report that cruise is engaged.
+    # ES_Brake continues to report that cruise is engaged.
     self._rx(self._acc_state_msg(True, 44))
     self.assertTrue(self.safety.get_controls_allowed())
 
