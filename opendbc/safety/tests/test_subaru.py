@@ -212,6 +212,21 @@ class TestSubaruAngleSafetyBase(TestSubaruSafetyBase, common.AngleSteeringSafety
     values = {"Steering_Angle": angle}
     return self.packer.make_can_msg_panda("Steering_2", SUBARU_MAIN_BUS, values)
 
+  def test_steering_torque_angle_does_not_override_steering_2(self):
+    # This reproduces a real inactive-frame rejection: Steering_2 and the command reported -14.10 deg,
+    # while Steering_Torque's coarser scaling reported -14.0833 deg (two safety units apart).
+    for _ in range(common.MAX_SAMPLE_VALS):
+      self._rx(self._angle_meas_msg(-14.10))
+
+    for _ in range(common.MAX_SAMPLE_VALS):
+      values = {"Steering_Angle": -14.0833}
+      self._rx(self.packer.make_can_msg_panda("Steering_Torque", SUBARU_MAIN_BUS, values))
+
+    self.assertEqual(-1410, self.safety.get_angle_meas_min())
+    self.assertEqual(-1410, self.safety.get_angle_meas_max())
+    self.assertFalse(self._tx(self._angle_cmd_msg(-14.08, False)))
+    self.assertTrue(self._tx(self._angle_cmd_msg(-14.10, False)))
+
   def _speed_msg(self, speed):
     # convert meters-per-second to kilometers per hour for message
     values = {s: speed * 3.6 for s in ["FR", "FL", "RR", "RL"]}

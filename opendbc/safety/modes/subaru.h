@@ -113,7 +113,8 @@ static void subaru_rx_hook(const CANPacket_t *msg) {
     torque_driver_new = -1 * to_signed(torque_driver_new, 11);
     update_sample(&torque_driver, torque_driver_new);
 
-    // LKAS_ANGLE cars use Steering_2 for angle measurement; Steering_Torque angle is zero on newer variants
+    // LKAS_ANGLE cars use Steering_2 for angle measurement. Steering_Torque may be zero on newer variants,
+    // and on others its coarser scaling can differ from the angle command enough to fail inactive checks.
     if (!subaru_lkas_angle) {
       int angle_meas_new = (GET_BYTES(msg, 4, 2) & 0xFFFFU);
       // convert Steering_Torque -> Steering_Angle to centidegrees, to match the ES_LKAS_ANGLE angle request units
@@ -122,7 +123,7 @@ static void subaru_rx_hook(const CANPacket_t *msg) {
     }
   }
 
-  // For LKAS_ANGLE cars, Steering_2 carries the actual angle in the same units as ES_LKAS_ANGLE (0.01 deg/LSB)
+  // Steering_2 matches the ES_LKAS_ANGLE command's 0.01 deg/LSB scaling.
   if ((msg->addr == MSG_SUBARU_Steering_2) && (msg->bus == SUBARU_MAIN_BUS) && subaru_lkas_angle) {
     int angle_meas_new = (GET_BYTES(msg, 3, 3) & 0x1FFFFU);
     angle_meas_new = -1 * to_signed(angle_meas_new, 17);
