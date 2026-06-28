@@ -183,6 +183,13 @@ class TestSubaruTorqueSafetyBase(TestSubaruSafetyBase, common.DriverTorqueSteeri
   MAX_INVALID_STEERING_FRAMES = 1
   STEER_STEP = 2
 
+  def test_steering_torque_angle_measurement(self):
+    for _ in range(common.MAX_SAMPLE_VALS):
+      self._rx(self._angle_meas_msg(10.0))
+
+    self.assertEqual(1000, self.safety.get_angle_meas_min())
+    self.assertEqual(1000, self.safety.get_angle_meas_max())
+
   def _torque_cmd_msg(self, torque, steer_req=1):
     values = {"LKAS_Output": torque, "LKAS_Request": steer_req}
     return self.packer.make_can_msg_panda("ES_LKAS", SUBARU_MAIN_BUS, values)
