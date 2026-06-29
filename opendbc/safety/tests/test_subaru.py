@@ -2,6 +2,9 @@
 import enum
 import unittest
 
+import numpy as np
+
+from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.subaru.values import SubaruSafetyFlags
 from opendbc.car.structs import CarParams
 from opendbc.safety.tests.libsafety import libsafety_py
@@ -210,6 +213,9 @@ class TestSubaruAngleSafetyBase(TestSubaruSafetyBase, common.AngleSteeringSafety
   ANGLE_RATE_UP = [5, 0.15, 0.15]
   ANGLE_RATE_DOWN = [5, 0.4, 0.4]
 
+  LOW_SPEED_ANGLE_MAX = 200
+  LOW_SPEED_ANGLE_MAX_SPEED = 10 * CV.MPH_TO_MS
+
   def _angle_cmd_msg(self, angle, enabled=1):
     values = {"LKAS_Output": angle, "LKAS_Request": enabled}
     return self.packer.make_can_msg_panda("ES_LKAS_ANGLE", SUBARU_MAIN_BUS, values)
@@ -218,6 +224,66 @@ class TestSubaruAngleSafetyBase(TestSubaruSafetyBase, common.AngleSteeringSafety
     # LKAS_ANGLE cars carry the steering angle in Steering_2 (same 0.01 deg/LSB encoding as ES_LKAS_ANGLE)
     values = {"Steering_Angle": angle}
     return self.packer.make_can_msg_panda("Steering_2", SUBARU_MAIN_BUS, values)
+
+  def test_angle_cmd_when_enabled(self):
+    # Preserve the common rate-limit coverage while staying below Subaru's separate 200-degree
+    # active-request boundary at low speed.
+    for speed in [0., 1., 5., 10., 15., 50.]:
+      angle_max_abs = 190 if speed < self.LOW_SPEED_ANGLE_MAX_SPEED else self.STEER_ANGLE_MAX + 10
+      angles = np.concatenate((np.arange(-angle_max_abs, angle_max_abs + 1, 5), [0]))
+
+      for angle in angles:
+        max_delta_up = np.interp(speed, self.ANGLE_RATE_BP, self.ANGLE_RATE_UP)
+        max_delta_down = np.interp(speed, self.ANGLE_RATE_BP, self.ANGLE_RATE_DOWN)
+
+        self._reset_angle_measurement(angle)
+        self._reset_speed_measurement(speed)
+        self._set_prev_desired_angle(angle)
+        self.safety.set_controls_allowed(True)
+
+        self.assertTrue(self._tx(self._angle_cmd_msg(angle + common.sign_of(angle) * max_delta_up, True)))
+        self.assertTrue(self._tx(self._angle_cmd_msg(angle, True)))
+        self.assertTrue(self._tx(self._angle_cmd_msg(angle - common.sign_of(angle) * max_delta_down, True)))
+
+        self.assertFalse(self._tx(self._angle_cmd_msg(angle + common.sign_of(angle) * (max_delta_up + 1.1), True)))
+
+        self.safety.set_controls_allowed(True)
+        self._set_prev_desired_angle(angle)
+        self.assertTrue(self._tx(self._angle_cmd_msg(angle, True)))
+        self.assertFalse(self._tx(self._angle_cmd_msg(angle - common.sign_of(angle) * (max_delta_down + 1.1), True)))
+
+        self.safety.set_controls_allowed(False)
+        self.assertEqual(abs(angle) <= self.STEER_ANGLE_MAX, self._tx(self._angle_cmd_msg(angle, False)))
+
+  def test_low_speed_active_angle_boundary(self):
+    for sign in (-1, 1):
+      with self.subTest(sign=sign):
+        low_speed = self.LOW_SPEED_ANGLE_MAX_SPEED - 0.1
+        high_speed = self.LOW_SPEED_ANGLE_MAX_SPEED + 0.1
+
+        for angle, should_tx in ((self.LOW_SPEED_ANGLE_MAX - 0.01, True),
+                                 (self.LOW_SPEED_ANGLE_MAX, False)):
+          angle *= sign
+          self._reset_angle_measurement(angle)
+          self._reset_speed_measurement(low_speed)
+          self._set_prev_desired_angle(angle)
+          self.safety.set_controls_allowed(True)
+          self.assertEqual(should_tx, self._tx(self._angle_cmd_msg(angle, True)))
+
+        # The same request is allowed above the low-speed boundary.
+        angle = self.LOW_SPEED_ANGLE_MAX * sign
+        self._reset_angle_measurement(angle)
+        self._reset_speed_measurement(high_speed)
+        self._set_prev_desired_angle(angle)
+        self.safety.set_controls_allowed(True)
+        self.assertTrue(self._tx(self._angle_cmd_msg(angle, True)))
+
+        # Inactive heartbeats must continue following measured angle beyond 200 degrees.
+        angle = 300 * sign
+        self._reset_angle_measurement(angle)
+        self._reset_speed_measurement(low_speed)
+        self.safety.set_controls_allowed(True)
+        self.assertTrue(self._tx(self._angle_cmd_msg(angle, False)))
 
   def test_steering_torque_angle_does_not_override_steering_2(self):
     # This reproduces a real inactive-frame rejection: Steering_2 and the command reported -14.10 deg,

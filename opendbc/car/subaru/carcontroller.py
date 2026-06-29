@@ -1,6 +1,7 @@
 import numpy as np
 from opendbc.can import CANPacker
 from opendbc.car import Bus, make_tester_present_msg
+from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.lateral import apply_driver_steer_torque_limits, apply_std_steer_angle_limits, common_fault_avoidance
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.subaru import subarucan
@@ -11,23 +12,12 @@ from opendbc.car.subaru.values import DBC, GLOBAL_ES_ADDR, CanBus, CarController
 MAX_STEER_RATE = 25  # deg/s
 MAX_STEER_RATE_FRAMES = 7  # tx control frames needed before torque can be cut
 
-# LKAS_ANGLE EPS effort (torque) inhibitor.
-# The LKAS_ANGLE EPS latches a permanent Steer_Error_1 when its self-drive torque output stays near
-# its ceiling (~2250 units) for too long. This happens on tight low-speed turns the wheel cannot
-# physically follow, where the EPS hits its effort limit. It is NOT a tracking-error or thermal
-# limit: the same EPS delivers ~9800 units under driver-assisted steering without faulting, and
-# clamping the command-to-measured tracking error (tried 45° and 20°) did not prevent the fault.
-# Log analysis of two faulting turns: normal active driving peaks ~620 units, while both faults
-# sustained ~1400 units for ~1.16s before latching. So inhibit the angle request once EPS torque is
-# sustained above EPS_TORQUE_HIGH, anchor the command to the measured angle, and hold the cutout
-# with hysteresis until torque relaxes below EPS_TORQUE_RELEASE. This is a stateful cutout, not a
-# per-frame proportional feedback: the EPS torque signal is delayed and noisy enough that direct
-# feedback could oscillate.
-EPS_TORQUE_HIGH = 1400         # units; sustained EPS torque output above this starts inhibition
-EPS_TORQUE_RELEASE = 1000      # units; EPS torque must fall back below this to release
-EPS_TORQUE_FAULT_FRAMES = 12   # ~0.24s at 50Hz of sustained high torque before inhibiting
-EPS_INHIBIT_MIN_FRAMES = 20    # hold inhibition at least ~0.4s
-EPS_RELEASE_FRAMES = 10        # require ~0.2s below the release threshold before re-engaging
+# Modern Subaru angle-LKAS EPS units hard-fault when an active steering request reaches about
+# 200 degrees below 10 mph. Yield before that boundary, but continue sending the measured angle
+# with LKAS_Request clear so the EPS keeps receiving its heartbeat at full physical steering lock.
+LKAS_ANGLE_YIELD_ANGLE = 190.0
+LKAS_ANGLE_YIELD_RELEASE_ANGLE = 180.0
+LKAS_ANGLE_YIELD_SPEED = 10.0 * CV.MPH_TO_MS
 
 
 class CarController(CarControllerBase):
@@ -39,11 +29,7 @@ class CarController(CarControllerBase):
     self.cruise_button_prev = 0
     self.steer_rate_counter = 0
 
-    # LKAS_ANGLE EPS effort inhibitor state
-    self.eps_inhibit = False
-    self.eps_high_frames = 0
-    self.eps_low_frames = 0
-    self.eps_inhibit_frames = 0
+    self.lkas_angle_yield = False
 
     self.p = CarControllerParams(CP)
     self.packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
@@ -64,28 +50,20 @@ class CarController(CarControllerBase):
                                                    CS.out.steeringAngleDeg, CC.latActive, CarControllerParams.ANGLE_LIMITS)
         apply_steer_req = CC.latActive
 
-        # EPS effort inhibitor: when the EPS self-drive torque is sustained near its fault ceiling
-        # (tight low-speed turn the wheel can't follow), cut the request and anchor to the measured
-        # angle so the EPS isn't driven into a permanent Steer_Error_1. Hysteretic stateful cutout.
-        eps_torque = abs(CS.out.steeringTorqueEps)
         if not CC.latActive:
-          self.eps_inhibit = False
-          self.eps_high_frames = 0
-        elif not self.eps_inhibit:
-          self.eps_high_frames = self.eps_high_frames + 1 if eps_torque > EPS_TORQUE_HIGH else 0
-          if self.eps_high_frames >= EPS_TORQUE_FAULT_FRAMES:
-            self.eps_inhibit = True
-            self.eps_inhibit_frames = 0
-            self.eps_low_frames = 0
+          self.lkas_angle_yield = False
+        elif self.lkas_angle_yield:
+          angle_recovered = max(abs(apply_steer), abs(CS.out.steeringAngleDeg)) < LKAS_ANGLE_YIELD_RELEASE_ANGLE
+          if angle_recovered:
+            self.lkas_angle_yield = False
         else:
-          self.eps_inhibit_frames += 1
-          self.eps_low_frames = self.eps_low_frames + 1 if eps_torque < EPS_TORQUE_RELEASE else 0
-          if self.eps_inhibit_frames >= EPS_INHIBIT_MIN_FRAMES and self.eps_low_frames >= EPS_RELEASE_FRAMES:
-            self.eps_inhibit = False
-            self.eps_high_frames = 0
+          angle_at_boundary = max(abs(apply_steer), abs(CS.out.steeringAngleDeg)) >= LKAS_ANGLE_YIELD_ANGLE
+          if CS.out.vEgoRaw < LKAS_ANGLE_YIELD_SPEED and angle_at_boundary:
+            self.lkas_angle_yield = True
 
-        if not CC.latActive or self.eps_inhibit:
-          # anchor to measured angle and drop the request (inactive, or EPS effort inhibited)
+        if not CC.latActive or self.lkas_angle_yield:
+          # Match the stock camera's inactive behavior: keep the EPS heartbeat tracking the measured
+          # wheel angle while dropping LKAS_Request.
           apply_steer = CS.out.steeringAngleDeg
           apply_steer_req = False
 
