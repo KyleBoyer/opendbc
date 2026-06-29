@@ -11,6 +11,11 @@ from opendbc.car.subaru.values import DBC, GLOBAL_ES_ADDR, CanBus, CarController
 MAX_STEER_RATE = 25  # deg/s
 MAX_STEER_RATE_FRAMES = 7  # tx control frames needed before torque can be cut
 
+# Max degrees the LKAS_ANGLE command can lead the measured wheel angle.
+# The EPS faults (Steer_Error_1) if the tracking error exceeds ~60° for ~1s;
+# 45° gives a comfortable margin while still allowing fast tight-turn commands.
+MAX_ANGLE_TRACKING_ERROR = 45.  # deg
+
 
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP, CP_SP):
@@ -41,6 +46,12 @@ class CarController(CarControllerBase):
 
         if not CC.latActive:
           apply_steer = CS.out.steeringAngleDeg
+        else:
+          # Clamp command to within MAX_ANGLE_TRACKING_ERROR of actual to prevent the EPS from
+          # faulting (Steer_Error_1) when the commanded angle races too far ahead of the wheel.
+          apply_steer = float(np.clip(apply_steer,
+                                      CS.out.steeringAngleDeg - MAX_ANGLE_TRACKING_ERROR,
+                                      CS.out.steeringAngleDeg + MAX_ANGLE_TRACKING_ERROR))
 
         can_sends.append(subarucan.create_steering_control_angle(self.packer, apply_steer, CC.latActive))
         self.apply_steer_last = apply_steer
