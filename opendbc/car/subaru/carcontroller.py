@@ -23,6 +23,13 @@ MAX_STEER_RATE_FRAMES = 7  # tx control frames needed before torque can be cut
 LKAS_ANGLE_MAX_ACTIVE = 195.0    # deg; max active request magnitude
 LKAS_ANGLE_YIELD_RELEASE = 185.0  # deg; measured must fall below this to resume active control
 
+# Driver override: when the driver applies steering torque, stop actively requesting (track measured)
+# so they can steer freely - e.g. ease out of a turn the model still wants to hold. Hysteresis (release
+# below _LOW) prevents request chatter. Normal angle-LKAS steering keeps driver torque under ~80 (the
+# steeringPressed threshold), so STEER_OVERRIDE_TORQUE_HIGH is clearly a deliberate driver input.
+STEER_OVERRIDE_TORQUE_HIGH = 100  # enter override
+STEER_OVERRIDE_TORQUE_LOW = 60    # exit override
+
 
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP, CP_SP):
@@ -34,6 +41,7 @@ class CarController(CarControllerBase):
     self.steer_rate_counter = 0
 
     self.lkas_angle_yield = False
+    self.driver_override = False
 
     self.p = CarControllerParams(CP)
     self.packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
@@ -50,14 +58,23 @@ class CarController(CarControllerBase):
       apply_steer = 0
       apply_torque = 0
       if self.CP.flags & SubaruFlags.LKAS_ANGLE:
+        # Driver override: once the driver applies steering torque, stop actively requesting so they
+        # can steer freely (e.g. ease out of a turn the model still wants to hold). Hysteresis.
+        abs_driver_torque = abs(CS.out.steeringTorque)
+        if abs_driver_torque > STEER_OVERRIDE_TORQUE_HIGH:
+          self.driver_override = True
+        elif abs_driver_torque < STEER_OVERRIDE_TORQUE_LOW:
+          self.driver_override = False
+        lat_active = CC.latActive and not self.driver_override
+
         apply_steer = apply_std_steer_angle_limits(actuators.steeringAngleDeg, self.apply_steer_last, CS.out.vEgoRaw,
-                                                   CS.out.steeringAngleDeg, CC.latActive, CarControllerParams.ANGLE_LIMITS)
-        apply_steer_req = CC.latActive
+                                                   CS.out.steeringAngleDeg, lat_active, CarControllerParams.ANGLE_LIMITS)
+        apply_steer_req = lat_active
 
         # Never actively request an angle the EPS will fault on (enforced at all speeds to avoid a
         # speed-gate discontinuity). Clamping rather than dropping the request lets the wheel keep
         # steering to the limit without request-bit chatter.
-        if CC.latActive:
+        if lat_active:
           apply_steer = float(np.clip(apply_steer, -LKAS_ANGLE_MAX_ACTIVE, LKAS_ANGLE_MAX_ACTIVE))
 
         # Once the measured wheel reaches the limit, stop actively requesting and track the measured
@@ -66,7 +83,7 @@ class CarController(CarControllerBase):
         # still wants a large angle re-engages an active command that pushes against the (overshooting
         # or exiting) wheel, which jerks the steering. Releasing only when the turn is genuinely
         # ending lets the command track the wheel back down smoothly.
-        if not CC.latActive:
+        if not lat_active:
           self.lkas_angle_yield = False
         elif not self.lkas_angle_yield:
           if abs(CS.out.steeringAngleDeg) >= LKAS_ANGLE_MAX_ACTIVE:
@@ -74,7 +91,7 @@ class CarController(CarControllerBase):
         elif max(abs(actuators.steeringAngleDeg), abs(CS.out.steeringAngleDeg)) < LKAS_ANGLE_YIELD_RELEASE:
           self.lkas_angle_yield = False
 
-        if not CC.latActive or self.lkas_angle_yield:
+        if not lat_active or self.lkas_angle_yield:
           apply_steer = CS.out.steeringAngleDeg
           apply_steer_req = False
 

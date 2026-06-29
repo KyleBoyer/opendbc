@@ -3,7 +3,8 @@ import pytest
 from opendbc.can import CANParser
 from opendbc.car import Bus, structs
 from opendbc.car.lateral import apply_std_steer_angle_limits
-from opendbc.car.subaru.carcontroller import CarController, LKAS_ANGLE_MAX_ACTIVE, LKAS_ANGLE_YIELD_RELEASE
+from opendbc.car.subaru.carcontroller import (CarController, LKAS_ANGLE_MAX_ACTIVE, LKAS_ANGLE_YIELD_RELEASE,
+                                              STEER_OVERRIDE_TORQUE_HIGH, STEER_OVERRIDE_TORQUE_LOW)
 from opendbc.car.subaru.fingerprints import FW_VERSIONS
 from opendbc.car.subaru.interface import CarInterface
 from opendbc.car.subaru.values import CAR, CanBus, CarControllerParams, DBC
@@ -44,7 +45,7 @@ class TestSubaruAngleClamp:
     # decode the angle command the controller transmits
     self.parser = CANParser(DBC[self.CP.carFingerprint][Bus.pt], [("ES_LKAS_ANGLE", 0)], CanBus.main)
 
-  def _update(self, desired=150., measured=150., lat_active=True, v_ego=2.0):
+  def _update(self, desired=150., measured=150., lat_active=True, v_ego=2.0, driver_torque=0.):
     """Run one steering frame and return the decoded (LKAS_Output, LKAS_Request)."""
     CC = structs.CarControl()
     CC.enabled = lat_active
@@ -55,6 +56,7 @@ class TestSubaruAngleClamp:
     CS = structs.CarState()
     CS.steeringAngleDeg = measured
     CS.vEgoRaw = v_ego
+    CS.steeringTorque = driver_torque
 
     class _CS:
       out = CS
@@ -167,6 +169,25 @@ class TestSubaruAngleClamp:
     output, request = self._update(desired=0., measured=300., lat_active=False)
     assert request == 0
     assert output == pytest.approx(300., abs=0.05)
+
+  def test_driver_override_drops_request(self):
+    # high driver torque drops the active request (anchored to measured) so the driver steers freely
+    self.cc.apply_steer_last = 150.
+    output, request = self._update(desired=250., measured=150., driver_torque=STEER_OVERRIDE_TORQUE_HIGH + 20.)
+    assert request == 0
+    assert self.cc.driver_override
+    assert output == pytest.approx(150., abs=0.05)
+
+    # hysteresis: torque between the thresholds keeps the override engaged
+    _, request = self._update(desired=250., measured=150.,
+                              driver_torque=(STEER_OVERRIDE_TORQUE_HIGH + STEER_OVERRIDE_TORQUE_LOW) // 2)
+    assert request == 0
+    assert self.cc.driver_override
+
+    # once torque is released, active control resumes
+    _, request = self._update(desired=250., measured=150., driver_torque=STEER_OVERRIDE_TORQUE_LOW - 20.)
+    assert request == 1
+    assert not self.cc.driver_override
 
 
 class TestSubaruParams:
