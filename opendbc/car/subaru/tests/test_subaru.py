@@ -129,6 +129,23 @@ class TestSubaruAngleClamp:
     assert request == 1
     assert not self.cc.lkas_angle_yield
 
+  def test_yield_holds_while_model_still_requesting(self):
+    # while the model still requests a large angle, the yield holds even if the measured wheel dips
+    # below the release boundary (overshoot/exit), so we don't re-engage and jerk the wheel
+    self.cc.apply_steer_last = LKAS_ANGLE_MAX_ACTIVE
+    self._update(desired=300., measured=LKAS_ANGLE_MAX_ACTIVE, v_ego=self.LOW_SPEED)
+    assert self.cc.lkas_angle_yield
+
+    _, request = self._update(desired=300., measured=LKAS_ANGLE_YIELD_RELEASE - 20., v_ego=self.LOW_SPEED)
+    assert request == 0
+    assert self.cc.lkas_angle_yield
+
+    # only once the model request also eases (turn ending) and the wheel is down do we resume
+    _, request = self._update(desired=LKAS_ANGLE_YIELD_RELEASE - 20., measured=LKAS_ANGLE_YIELD_RELEASE - 20.,
+                              v_ego=self.LOW_SPEED)
+    assert request == 1
+    assert not self.cc.lkas_angle_yield
+
   def test_clamp_applies_at_high_speed(self):
     # the clamp is speed-independent: a large desired well above the old 10 mph gate is still clamped
     self.cc.apply_steer_last = LKAS_ANGLE_MAX_ACTIVE

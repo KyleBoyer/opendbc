@@ -61,14 +61,17 @@ class CarController(CarControllerBase):
           apply_steer = float(np.clip(apply_steer, -LKAS_ANGLE_MAX_ACTIVE, LKAS_ANGLE_MAX_ACTIVE))
 
         # Once the measured wheel reaches the limit, stop actively requesting and track the measured
-        # angle (heartbeat) so we don't fight the wheel at full lock. Hysteresis on the release keeps
-        # the request bit from chattering at the boundary.
+        # angle (heartbeat) so we don't fight the wheel at full lock. Hold the yield until BOTH the
+        # model request and the measured wheel fall below the release angle: releasing while the model
+        # still wants a large angle re-engages an active command that pushes against the (overshooting
+        # or exiting) wheel, which jerks the steering. Releasing only when the turn is genuinely
+        # ending lets the command track the wheel back down smoothly.
         if not CC.latActive:
           self.lkas_angle_yield = False
         elif not self.lkas_angle_yield:
           if abs(CS.out.steeringAngleDeg) >= LKAS_ANGLE_MAX_ACTIVE:
             self.lkas_angle_yield = True
-        elif abs(CS.out.steeringAngleDeg) < LKAS_ANGLE_YIELD_RELEASE:
+        elif max(abs(actuators.steeringAngleDeg), abs(CS.out.steeringAngleDeg)) < LKAS_ANGLE_YIELD_RELEASE:
           self.lkas_angle_yield = False
 
         if not CC.latActive or self.lkas_angle_yield:
