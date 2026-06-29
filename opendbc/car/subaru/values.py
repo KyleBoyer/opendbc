@@ -12,7 +12,7 @@ Ecu = CarParams.Ecu
 
 class CarControllerParams:
   ANGLE_LIMITS: AngleSteeringLimits = AngleSteeringLimits(
-    100,
+    545,
     ([0., 15., 15.], [5., .8, .8]),
     ([0., 15., 15.], [5., .4, 0.4]),
   )

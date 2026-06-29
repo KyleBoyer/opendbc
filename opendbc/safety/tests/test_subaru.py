@@ -205,7 +205,7 @@ class TestSubaruAngleSafetyBase(TestSubaruSafetyBase, common.AngleSteeringSafety
 
   FLAGS = SubaruSafetyFlags.LKAS_ANGLE | SubaruSafetyFlags.GEN2
 
-  STEER_ANGLE_MAX = 500
+  STEER_ANGLE_MAX = 545
   ANGLE_RATE_BP = [0, 15, 15]
   ANGLE_RATE_UP = [5, 0.15, 0.15]
   ANGLE_RATE_DOWN = [5, 0.4, 0.4]
