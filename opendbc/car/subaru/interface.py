@@ -53,7 +53,7 @@ class CarInterface(CarInterfaceBase):
 
     elif candidate == CAR.SUBARU_ASCENT_2023:
       ret.dashcamOnly = False
-      ret.steerActuatorDelay = 0.3  # end-to-end angle controller
+      ret.steerActuatorDelay = 0.1
       ret.lateralTuning.init('pid')
       ret.lateralTuning.pid.kf = 0.00003
       ret.lateralTuning.pid.kpBP = [0., 20.]
