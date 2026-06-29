@@ -270,41 +270,44 @@ class TestSubaruAngleSafetyBase(TestSubaruSafetyBase, common.AngleSteeringSafety
     # enforce_angle_error backstops the EPS tracking fault: while moving, a command may not lead
     # the measured wheel angle by more than max_angle_error (45 deg). At a true standstill the
     # boundary is not enforced (angle_error_min_speed = 0). Commands beyond max_angle are clamped.
+    # Checked in both steering directions for symmetry.
     MAX_ERROR = 45.0
     meas = 0.0
-    self._reset_angle_measurement(meas)
 
-    # A 1.5 deg step is within the rate limit at both 0 and 10 m/s, so only the tracking-error
-    # boundary changes the outcome between standstill and moving.
-    for speed, enforced in ((10.0, True), (0.0, False)):
-      self._reset_speed_measurement(speed)
-      prev = MAX_ERROR - 0.5  # just inside the boundary
+    for sign in (1, -1):
+      self._reset_angle_measurement(meas)
 
-      # a step that crosses the 45 deg boundary is blocked only while moving
+      # A 1.5 deg step is within the rate limit at both 0 and 10 m/s, so only the tracking-error
+      # boundary changes the outcome between standstill and moving.
+      for speed, enforced in ((10.0, True), (0.0, False)):
+        self._reset_speed_measurement(speed)
+        prev = sign * (MAX_ERROR - 0.5)  # just inside the boundary
+
+        # a step that crosses the 45 deg boundary is blocked only while moving
+        self.safety.set_controls_allowed(1)
+        self._set_prev_desired_angle(prev)
+        self.assertEqual(not enforced, self._tx(self._angle_cmd_msg(prev + sign * 1.5, True)))
+
+        # a step that stays inside the boundary is always allowed
+        self.safety.set_controls_allowed(1)
+        self._set_prev_desired_angle(prev)
+        self.assertTrue(self._tx(self._angle_cmd_msg(prev + sign * 0.4, True)))
+
+      # when already beyond the boundary, panda allows only a compliant approach back toward meas
+      self._reset_speed_measurement(10.0)
       self.safety.set_controls_allowed(1)
-      self._set_prev_desired_angle(prev)
-      self.assertEqual(not enforced, self._tx(self._angle_cmd_msg(prev + 1.5, True)))
-
-      # a step that stays inside the boundary is always allowed
+      self._set_prev_desired_angle(sign * 60.0)
+      self.assertFalse(self._tx(self._angle_cmd_msg(sign * 60.0, True)))  # holding the lead is rejected
       self.safety.set_controls_allowed(1)
-      self._set_prev_desired_angle(prev)
-      self.assertTrue(self._tx(self._angle_cmd_msg(prev + 0.4, True)))
+      self._set_prev_desired_angle(sign * 60.0)
+      self.assertTrue(self._tx(self._angle_cmd_msg(sign * 58.0, True)))   # moving toward meas is allowed
 
-    # when already beyond the boundary, panda allows only a relaxed-rate approach back toward meas
-    self._reset_speed_measurement(10.0)
-    self.safety.set_controls_allowed(1)
-    self._set_prev_desired_angle(60.0)
-    self.assertFalse(self._tx(self._angle_cmd_msg(60.0, True)))  # holding the lead is rejected
-    self.safety.set_controls_allowed(1)
-    self._set_prev_desired_angle(60.0)
-    self.assertTrue(self._tx(self._angle_cmd_msg(58.0, True)))   # moving toward meas is allowed
-
-    # commands beyond max_angle are clamped to the ceiling while moving
-    self._reset_angle_measurement(self.STEER_ANGLE_MAX)
-    self._reset_speed_measurement(10.0)
-    self.safety.set_controls_allowed(1)
-    self._set_prev_desired_angle(self.STEER_ANGLE_MAX)
-    self.assertFalse(self._tx(self._angle_cmd_msg(self.STEER_ANGLE_MAX + 5, True)))
+      # commands beyond max_angle are clamped to the ceiling while moving
+      self._reset_angle_measurement(sign * self.STEER_ANGLE_MAX)
+      self._reset_speed_measurement(10.0)
+      self.safety.set_controls_allowed(1)
+      self._set_prev_desired_angle(sign * self.STEER_ANGLE_MAX)
+      self.assertFalse(self._tx(self._angle_cmd_msg(sign * (self.STEER_ANGLE_MAX + 5), True)))
 
   def test_steering_torque_angle_does_not_override_steering_2(self):
     # This reproduces a real inactive-frame rejection: Steering_2 and the command reported -14.10 deg,
