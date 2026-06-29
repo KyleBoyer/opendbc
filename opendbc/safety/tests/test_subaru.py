@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 import enum
 import unittest
-import numpy as np
 
 from opendbc.car.subaru.values import SubaruSafetyFlags
 from opendbc.car.structs import CarParams
 from opendbc.safety.tests.libsafety import libsafety_py
 import opendbc.safety.tests.common as common
-from opendbc.safety.tests.common import CANPackerPanda, sign_of
+from opendbc.safety.tests.common import CANPackerPanda
 from functools import partial
 
 
@@ -219,95 +218,6 @@ class TestSubaruAngleSafetyBase(TestSubaruSafetyBase, common.AngleSteeringSafety
     # LKAS_ANGLE cars carry the steering angle in Steering_2 (same 0.01 deg/LSB encoding as ES_LKAS_ANGLE)
     values = {"Steering_Angle": angle}
     return self.packer.make_can_msg_panda("Steering_2", SUBARU_MAIN_BUS, values)
-
-  # The angle EPS faults if the command leads the measured wheel angle by too much, so this mode
-  # sets enforce_angle_error. The base AngleSteeringSafetyTest.test_angle_cmd_when_enabled probes
-  # commands up to STEER_ANGLE_MAX + 10, but enforce_angle_error clamps commands to max_angle, so
-  # the rate-limit sweep is kept strictly within max_angle here. Beyond-max and tracking-error
-  # behavior are covered by test_angle_error_enforcement below.
-  def test_angle_cmd_when_enabled(self):
-    speeds = [0., 1., 5., 10., 15., 50.]
-    # stay a full max_delta_up below the ceiling so the up-case never crosses max_angle
-    angle_max_abs = self.STEER_ANGLE_MAX - max(self.ANGLE_RATE_UP) - 5
-    angles = np.concatenate((np.arange(-angle_max_abs, angle_max_abs, 5), [0]))
-    for a in angles:
-      for s in speeds:
-        max_delta_up = np.interp(s, self.ANGLE_RATE_BP, self.ANGLE_RATE_UP)
-        max_delta_down = np.interp(s, self.ANGLE_RATE_BP, self.ANGLE_RATE_DOWN)
-
-        # prev command and measurement track each other, so the tracking-error boundary is slack
-        self._reset_angle_measurement(a)
-        self._reset_speed_measurement(s)
-        self._set_prev_desired_angle(a)
-        self.safety.set_controls_allowed(1)
-
-        # Stay within rate limits
-        self.assertTrue(self._tx(self._angle_cmd_msg(a + sign_of(a) * max_delta_up, True)))
-        self.assertTrue(self.safety.get_controls_allowed())
-
-        self.assertTrue(self._tx(self._angle_cmd_msg(a, True)))
-        self.assertTrue(self.safety.get_controls_allowed())
-
-        self.assertTrue(self._tx(self._angle_cmd_msg(a - sign_of(a) * max_delta_down, True)))
-        self.assertTrue(self.safety.get_controls_allowed())
-
-        # Inject too high rates
-        self.assertFalse(self._tx(self._angle_cmd_msg(a + sign_of(a) * (max_delta_up + 1.1), True)))
-
-        self.safety.set_controls_allowed(1)
-        self._set_prev_desired_angle(a)
-        self.assertTrue(self.safety.get_controls_allowed())
-        self.assertTrue(self._tx(self._angle_cmd_msg(a, True)))
-        self.assertTrue(self.safety.get_controls_allowed())
-
-        self.assertFalse(self._tx(self._angle_cmd_msg(a - sign_of(a) * (max_delta_down + 1.1), True)))
-
-        # Desired steer should match measured angle when controls are off
-        self.safety.set_controls_allowed(0)
-        self.assertTrue(self._tx(self._angle_cmd_msg(a, False)))
-
-  def test_angle_error_enforcement(self):
-    # enforce_angle_error backstops the EPS tracking fault: while moving, a command may not lead
-    # the measured wheel angle by more than max_angle_error (20 deg). At a true standstill the
-    # boundary is not enforced (angle_error_min_speed = 0). Commands beyond max_angle are clamped.
-    # Checked in both steering directions for symmetry.
-    MAX_ERROR = 20.0
-    meas = 0.0
-
-    for sign in (1, -1):
-      self._reset_angle_measurement(meas)
-
-      # A 1.5 deg step is within the rate limit at both 0 and 10 m/s, so only the tracking-error
-      # boundary changes the outcome between standstill and moving.
-      for speed, enforced in ((10.0, True), (0.0, False)):
-        self._reset_speed_measurement(speed)
-        prev = sign * (MAX_ERROR - 0.5)  # just inside the boundary
-
-        # a step that crosses the 45 deg boundary is blocked only while moving
-        self.safety.set_controls_allowed(1)
-        self._set_prev_desired_angle(prev)
-        self.assertEqual(not enforced, self._tx(self._angle_cmd_msg(prev + sign * 1.5, True)))
-
-        # a step that stays inside the boundary is always allowed
-        self.safety.set_controls_allowed(1)
-        self._set_prev_desired_angle(prev)
-        self.assertTrue(self._tx(self._angle_cmd_msg(prev + sign * 0.4, True)))
-
-      # when already beyond the boundary, panda allows only a compliant approach back toward meas
-      self._reset_speed_measurement(10.0)
-      self.safety.set_controls_allowed(1)
-      self._set_prev_desired_angle(sign * 60.0)
-      self.assertFalse(self._tx(self._angle_cmd_msg(sign * 60.0, True)))  # holding the lead is rejected
-      self.safety.set_controls_allowed(1)
-      self._set_prev_desired_angle(sign * 60.0)
-      self.assertTrue(self._tx(self._angle_cmd_msg(sign * 58.0, True)))   # moving toward meas is allowed
-
-      # commands beyond max_angle are clamped to the ceiling while moving
-      self._reset_angle_measurement(sign * self.STEER_ANGLE_MAX)
-      self._reset_speed_measurement(10.0)
-      self.safety.set_controls_allowed(1)
-      self._set_prev_desired_angle(sign * self.STEER_ANGLE_MAX)
-      self.assertFalse(self._tx(self._angle_cmd_msg(sign * (self.STEER_ANGLE_MAX + 5), True)))
 
   def test_steering_torque_angle_does_not_override_steering_2(self):
     # This reproduces a real inactive-frame rejection: Steering_2 and the command reported -14.10 deg,

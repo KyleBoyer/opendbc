@@ -1,10 +1,10 @@
-import numpy as np
 import pytest
 
 from opendbc.can import CANParser
 from opendbc.car import Bus, structs
 from opendbc.car.lateral import apply_std_steer_angle_limits
-from opendbc.car.subaru.carcontroller import CarController, MAX_ANGLE_TRACKING_ERROR
+from opendbc.car.subaru.carcontroller import (CarController, EPS_TORQUE_HIGH, EPS_TORQUE_RELEASE,
+                                              EPS_TORQUE_FAULT_FRAMES, EPS_INHIBIT_MIN_FRAMES, EPS_RELEASE_FRAMES)
 from opendbc.car.subaru.fingerprints import FW_VERSIONS
 from opendbc.car.subaru.interface import CarInterface
 from opendbc.car.subaru.values import CAR, CanBus, CarControllerParams, DBC
@@ -27,13 +27,11 @@ class TestSubaruAngleLimits:
     assert apply_std_steer_angle_limits(-600, -540, 0, 0, True, limits) == -545
 
 
-class TestSubaruAngleTrackingClamp:
-  """Drive CarController.update() for an LKAS_ANGLE car and decode the ES_LKAS_ANGLE frame to
-  verify the tracking-error clamp: clamp the target to measured ±45° before rate-limiting, and
-  drop LKAS_Request (sending the measured angle) when rate and tracking constraints are mutually
-  impossible (e.g. rapid driver countersteer)."""
-
-  LIMITS = CarControllerParams.ANGLE_LIMITS
+class TestSubaruEpsTorqueInhibitor:
+  """Drive CarController.update() for an LKAS_ANGLE car and decode the ES_LKAS_ANGLE frame to verify
+  the EPS effort inhibitor: when the EPS self-drive torque (steeringTorqueEps) is sustained near its
+  fault ceiling, the controller drops LKAS_Request and anchors the command to the measured angle,
+  holding the cutout with hysteresis until torque relaxes."""
 
   def setup_method(self):
     self.CP = CarInterface.get_non_essential_params(CAR.SUBARU_ASCENT_2023)
@@ -42,14 +40,8 @@ class TestSubaruAngleTrackingClamp:
     # decode the angle command the controller transmits
     self.parser = CANParser(DBC[self.CP.carFingerprint][Bus.pt], [("ES_LKAS_ANGLE", 0)], CanBus.main)
 
-  def _rate_up(self, v_ego: float) -> float:
-    return float(np.interp(v_ego, self.LIMITS.ANGLE_RATE_LIMIT_UP[0], self.LIMITS.ANGLE_RATE_LIMIT_UP[1]))
-
-  def _update(self, desired: float, measured: float, lat_active: bool = True, v_ego: float = 0., prev: float | None = None):
+  def _update(self, desired=150., measured=150., eps_torque=0., lat_active=True, v_ego=2.0):
     """Run one steering frame and return the decoded (LKAS_Output, LKAS_Request)."""
-    if prev is not None:
-      self.cc.apply_steer_last = prev
-
     CC = structs.CarControl()
     CC.enabled = lat_active
     CC.latActive = lat_active
@@ -59,11 +51,12 @@ class TestSubaruAngleTrackingClamp:
     CS = structs.CarState()
     CS.steeringAngleDeg = measured
     CS.vEgoRaw = v_ego
+    CS.steeringTorqueEps = eps_torque
 
     class _CS:
       out = CS
-    # use a steer-only frame (frame % STEER_STEP == 0, frame % 10 != 0) so no dashboard
-    # messages are emitted and only the ES_LKAS_ANGLE command is on the bus
+    # steer-only frame (frame % STEER_STEP == 0, frame % 10 != 0): only ES_LKAS_ANGLE is emitted,
+    # and the inhibitor counters advance one steering update per call
     self.cc.frame = 2
     _, can_sends = self.cc.update(CC.as_reader(), self.CP_SP, _CS(), 0)
 
@@ -71,62 +64,76 @@ class TestSubaruAngleTrackingClamp:
     vl = self.parser.vl["ES_LKAS_ANGLE"]
     return vl["LKAS_Output"], vl["LKAS_Request"]
 
-  def test_clamp_before_rate_limit_respects_panda_budget(self):
-    # large desired with measured reachable within the window: clamp first, then rate-limit, so the
-    # active command steps by at most the per-frame rate (5° at 0 m/s) and stays within ±45°
-    output, request = self._update(desired=300., measured=120., prev=100.)
+  def _run(self, n, **kw):
+    out = req = None
+    for _ in range(n):
+      out, req = self._update(**kw)
+    return out, req
+
+  def test_normal_torque_passes_through(self):
+    # ordinary active driving keeps the request and tracks the commanded angle
+    _, request = self._update(desired=10., measured=10., eps_torque=500.)
     assert request == 1
-    assert abs(output - 100.) <= self._rate_up(0.) + 0.05
-    assert abs(output - 120.) <= MAX_ANGLE_TRACKING_ERROR + 0.05
 
-  def test_clamp_before_rate_limit_negative(self):
-    output, request = self._update(desired=-300., measured=-120., prev=-100.)
+  def test_low_torque_never_inhibits(self):
+    # sustained ordinary torque (well below the ceiling) never trips the inhibitor
+    _, request = self._run(EPS_TORQUE_FAULT_FRAMES * 3, desired=10., measured=10., eps_torque=600.)
     assert request == 1
-    assert abs(output - (-100.)) <= self._rate_up(0.) + 0.05
-    assert abs(output - (-120.)) <= MAX_ANGLE_TRACKING_ERROR + 0.05
+    assert not self.cc.eps_inhibit
 
-  def test_fallback_drops_request_on_fast_countersteer_positive(self):
-    # rate limit from 100° only reaches 105°, tracking window minimum is 151°−45°=106° → mutually
-    # impossible: drop LKAS_Request and send the measured angle to keep the EPS heartbeat alive
-    output, request = self._update(desired=300., measured=151., prev=100.)
-    assert request == 0
-    assert output == pytest.approx(151., abs=0.05)
-
-  def test_fallback_drops_request_on_fast_countersteer_negative(self):
-    output, request = self._update(desired=-300., measured=-151., prev=-100.)
-    assert request == 0
-    assert output == pytest.approx(-151., abs=0.05)
-
-  def test_no_fallback_during_normal_tight_turn(self):
-    # tracking lag within the window: command is sent with LKAS_Request and stays within ±45°
-    output, request = self._update(desired=200., measured=90., prev=100.)
+  def test_brief_high_torque_does_not_inhibit(self):
+    # a high-torque spike shorter than the trigger window is ignored
+    self._run(EPS_TORQUE_FAULT_FRAMES - 1, desired=200., measured=150., eps_torque=EPS_TORQUE_HIGH + 300)
+    _, request = self._update(desired=200., measured=150., eps_torque=400.)
     assert request == 1
-    assert abs(output - 90.) <= MAX_ANGLE_TRACKING_ERROR + 0.05
+    assert not self.cc.eps_inhibit
 
-  def test_inactive_heartbeat_extreme_angle_positive(self):
-    # when not active, send the measured angle without LKAS_Request, even at ±482°
-    output, request = self._update(desired=0., measured=482., lat_active=False)
+  def test_sustained_high_torque_inhibits(self):
+    high = EPS_TORQUE_HIGH + 300
+    # one frame short of the trigger: still active
+    _, request = self._run(EPS_TORQUE_FAULT_FRAMES - 1, desired=200., measured=150., eps_torque=high)
+    assert request == 1
+    # the trigger frame drops the request and anchors the command to the measured angle
+    output, request = self._update(desired=200., measured=150., eps_torque=high)
     assert request == 0
-    assert output == pytest.approx(482., abs=0.05)
+    assert output == pytest.approx(150., abs=0.05)
+    assert self.cc.eps_inhibit
 
-  def test_inactive_heartbeat_extreme_angle_negative(self):
-    output, request = self._update(desired=0., measured=-482., lat_active=False)
+  def test_inhibit_holds_while_torque_stays_elevated(self):
+    # trip, then feed torque between the release and high thresholds: never releases
+    self._run(EPS_TORQUE_FAULT_FRAMES, desired=200., measured=150., eps_torque=EPS_TORQUE_HIGH + 300)
+    assert self.cc.eps_inhibit
+    mid = (EPS_TORQUE_HIGH + EPS_TORQUE_RELEASE) // 2
+    _, request = self._run(EPS_INHIBIT_MIN_FRAMES + EPS_RELEASE_FRAMES + 5, desired=200., measured=150., eps_torque=mid)
     assert request == 0
-    assert output == pytest.approx(-482., abs=0.05)
+    assert self.cc.eps_inhibit
 
-  def test_consecutive_updates_never_exceed_rate(self):
-    # several frames of a tight turn; the commanded angle never jumps more than the rate limit
-    # and never leads the measured wheel angle by more than 45°
-    prev = 0.
-    measured = 0.
-    rate_up = self._rate_up(0.)
-    for _ in range(30):
-      output, request = self._update(desired=300., measured=measured, prev=prev)
-      assert abs(output - prev) <= rate_up + 0.05
-      if request:
-        assert abs(output - measured) <= MAX_ANGLE_TRACKING_ERROR + 0.05
-      prev = output
-      measured += 5.  # EPS tracking at ~5°/frame
+  def test_release_requires_min_hold_and_low_torque(self):
+    self._run(EPS_TORQUE_FAULT_FRAMES, desired=200., measured=150., eps_torque=EPS_TORQUE_HIGH + 300)
+    assert self.cc.eps_inhibit
+    low = EPS_TORQUE_RELEASE - 200
+    # low torque but short of the minimum hold: still inhibited
+    _, request = self._run(EPS_INHIBIT_MIN_FRAMES - 1, desired=200., measured=150., eps_torque=low)
+    assert request == 0
+    assert self.cc.eps_inhibit
+    # the frame that satisfies both the min hold and the low-torque dwell re-engages
+    _, request = self._update(desired=200., measured=150., eps_torque=low)
+    assert request == 1
+    assert not self.cc.eps_inhibit
+
+  def test_inactive_resets_inhibition(self):
+    self._run(EPS_TORQUE_FAULT_FRAMES, desired=200., measured=150., eps_torque=EPS_TORQUE_HIGH + 300)
+    assert self.cc.eps_inhibit
+    # going inactive (driver override / disengage) clears the cutout immediately
+    _, request = self._update(desired=0., measured=150., eps_torque=2000., lat_active=False)
+    assert request == 0
+    assert not self.cc.eps_inhibit
+
+  def test_inactive_anchors_to_measured_angle(self):
+    # when not active, send the measured angle without LKAS_Request, even at a large angle
+    output, request = self._update(desired=0., measured=196., eps_torque=1700., lat_active=False)
+    assert request == 0
+    assert output == pytest.approx(196., abs=0.05)
 
 
 class TestSubaruParams:
