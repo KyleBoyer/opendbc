@@ -41,8 +41,7 @@
 #define MSG_SUBARU_ES_STATIC_1           0x22aU
 #define MSG_SUBARU_ES_STATIC_2           0x325U
 
-#define SUBARU_LKAS_ANGLE_LOW_SPEED_MAX    (200 * 100)
-#define SUBARU_LKAS_ANGLE_LOW_SPEED_MAX_MS 4470
+#define SUBARU_LKAS_ANGLE_MAX_ACTIVE       (200 * 100)
 
 #define SUBARU_MAIN_BUS 0U
 #define SUBARU_ALT_BUS  1U
@@ -226,11 +225,10 @@ static bool subaru_tx_hook(const CANPacket_t *msg) {
     desired_angle = -1 * to_signed(desired_angle, 17);
     bool lkas_request = GET_BIT(msg, 12U);
 
-    // Modern Subaru EPS units hard-fault on active requests at or above 200 degrees below 10 mph.
-    // This applies only while requesting control: inactive heartbeats must continue tracking the
-    // measured wheel angle through full physical steering lock.
-    violation |= lkas_request && (vehicle_speed.min < SUBARU_LKAS_ANGLE_LOW_SPEED_MAX_MS) &&
-                 (ABS(desired_angle) >= SUBARU_LKAS_ANGLE_LOW_SPEED_MAX);
+    // Modern Subaru EPS units hard-fault on active requests at or above 200 degrees (observed both
+    // below and just above 10 mph), so enforce it at all speeds. This applies only while requesting
+    // control: inactive heartbeats must continue tracking the measured wheel angle through full lock.
+    violation |= lkas_request && (ABS(desired_angle) >= SUBARU_LKAS_ANGLE_MAX_ACTIVE);
     violation |= steer_angle_cmd_checks(desired_angle, lkas_request, SUBARU_ANGLE_STEERING_LIMITS);
   }
 

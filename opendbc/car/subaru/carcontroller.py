@@ -1,7 +1,6 @@
 import numpy as np
 from opendbc.can import CANPacker
 from opendbc.car import Bus, make_tester_present_msg
-from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.lateral import apply_driver_steer_torque_limits, apply_std_steer_angle_limits, common_fault_avoidance
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.subaru import subarucan
@@ -13,15 +12,16 @@ MAX_STEER_RATE = 25  # deg/s
 MAX_STEER_RATE_FRAMES = 7  # tx control frames needed before torque can be cut
 
 # Modern Subaru angle-LKAS EPS units hard-fault when an ACTIVE steering request reaches ~200 deg
-# below ~10 mph (an independent tester confirmed 199 deg works, 200 deg faults; it is the requested
-# LKAS_Output that matters, not the measured wheel). Below that speed, clamp the active request just
-# under the limit so the wheel still steers to near full low-speed lock without faulting, while
-# keeping LKAS_Request set (no request-bit chatter). Only once the measured wheel itself reaches the
-# limit do we drop the request and track the measured angle (heartbeat), so we neither request past
-# the fault angle nor fight the wheel at full lock. Hysteresis on the release avoids chatter.
-LKAS_ANGLE_LOW_SPEED_MAX = 195.0   # deg; max active request magnitude below LKAS_ANGLE_LOW_SPEED
-LKAS_ANGLE_YIELD_RELEASE = 185.0   # deg; measured must fall below this to resume active control
-LKAS_ANGLE_LOW_SPEED = 10.0 * CV.MPH_TO_MS
+# (an independent tester confirmed 199 deg works, 200 deg faults; it is the requested LKAS_Output
+# that matters, not the measured wheel). This was first seen below 10 mph, but it also faults just
+# above 10 mph (observed at 11.2 mph), and a hard speed gate created a discontinuity: the clamp
+# released as speed crossed the gate, jerking the command up past 200 deg into the fault. So the
+# limit is enforced at ALL speeds (>=195 deg is only ever reachable in slow, sharp turns anyway).
+# Clamp the active request just under the limit so the wheel still steers to near full lock while
+# keeping LKAS_Request set (no request-bit chatter); only once the measured wheel itself reaches the
+# limit do we drop the request and track measured (heartbeat). Hysteresis on the release avoids chatter.
+LKAS_ANGLE_MAX_ACTIVE = 195.0    # deg; max active request magnitude
+LKAS_ANGLE_YIELD_RELEASE = 185.0  # deg; measured must fall below this to resume active control
 
 
 class CarController(CarControllerBase):
@@ -53,22 +53,22 @@ class CarController(CarControllerBase):
         apply_steer = apply_std_steer_angle_limits(actuators.steeringAngleDeg, self.apply_steer_last, CS.out.vEgoRaw,
                                                    CS.out.steeringAngleDeg, CC.latActive, CarControllerParams.ANGLE_LIMITS)
         apply_steer_req = CC.latActive
-        low_speed = CS.out.vEgoRaw < LKAS_ANGLE_LOW_SPEED
 
-        # Never actively request an angle the low-speed EPS will fault on. Clamping (rather than
-        # dropping the request) lets the wheel keep steering to the limit without request-bit chatter.
-        if CC.latActive and low_speed:
-          apply_steer = float(np.clip(apply_steer, -LKAS_ANGLE_LOW_SPEED_MAX, LKAS_ANGLE_LOW_SPEED_MAX))
+        # Never actively request an angle the EPS will fault on (enforced at all speeds to avoid a
+        # speed-gate discontinuity). Clamping rather than dropping the request lets the wheel keep
+        # steering to the limit without request-bit chatter.
+        if CC.latActive:
+          apply_steer = float(np.clip(apply_steer, -LKAS_ANGLE_MAX_ACTIVE, LKAS_ANGLE_MAX_ACTIVE))
 
-        # Once the measured wheel reaches the low-speed limit, stop actively requesting and track the
-        # measured angle (heartbeat) so we don't fight the wheel at full lock. Hysteresis on the
-        # release keeps the request bit from chattering at the boundary.
+        # Once the measured wheel reaches the limit, stop actively requesting and track the measured
+        # angle (heartbeat) so we don't fight the wheel at full lock. Hysteresis on the release keeps
+        # the request bit from chattering at the boundary.
         if not CC.latActive:
           self.lkas_angle_yield = False
         elif not self.lkas_angle_yield:
-          if low_speed and abs(CS.out.steeringAngleDeg) >= LKAS_ANGLE_LOW_SPEED_MAX:
+          if abs(CS.out.steeringAngleDeg) >= LKAS_ANGLE_MAX_ACTIVE:
             self.lkas_angle_yield = True
-        elif (not low_speed) or (abs(CS.out.steeringAngleDeg) < LKAS_ANGLE_YIELD_RELEASE):
+        elif abs(CS.out.steeringAngleDeg) < LKAS_ANGLE_YIELD_RELEASE:
           self.lkas_angle_yield = False
 
         if not CC.latActive or self.lkas_angle_yield:

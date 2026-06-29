@@ -3,8 +3,7 @@ import pytest
 from opendbc.can import CANParser
 from opendbc.car import Bus, structs
 from opendbc.car.lateral import apply_std_steer_angle_limits
-from opendbc.car.subaru.carcontroller import (CarController, LKAS_ANGLE_LOW_SPEED_MAX,
-                                              LKAS_ANGLE_YIELD_RELEASE, LKAS_ANGLE_LOW_SPEED)
+from opendbc.car.subaru.carcontroller import CarController, LKAS_ANGLE_MAX_ACTIVE, LKAS_ANGLE_YIELD_RELEASE
 from opendbc.car.subaru.fingerprints import FW_VERSIONS
 from opendbc.car.subaru.interface import CarInterface
 from opendbc.car.subaru.values import CAR, CanBus, CarControllerParams, DBC
@@ -27,13 +26,13 @@ class TestSubaruAngleLimits:
     assert apply_std_steer_angle_limits(-600, -540, 0, 0, True, limits) == -545
 
 
-class TestSubaruLowSpeedAngleClamp:
-  """Drive the real controller and decode ES_LKAS_ANGLE to verify low-speed EPS fault avoidance: the
-  active request is clamped just under the ~200 deg fault angle (request held, no chatter), and only
-  once the measured wheel reaches the limit is the request dropped to track the measured angle."""
+class TestSubaruAngleClamp:
+  """Drive the real controller and decode ES_LKAS_ANGLE to verify EPS fault avoidance: the active
+  request is clamped just under the ~200 deg fault angle (request held, no chatter) at all speeds,
+  and only once the measured wheel reaches the limit is the request dropped to track measured."""
 
-  LOW_SPEED = LKAS_ANGLE_LOW_SPEED - 0.5
-  HIGH_SPEED = LKAS_ANGLE_LOW_SPEED + 0.5
+  LOW_SPEED = 2.0   # m/s
+  HIGH_SPEED = 8.0  # m/s (well above the old 10 mph gate; the clamp is speed-independent)
 
   def setup_method(self):
     self.CP = CarInterface.get_non_essential_params(CAR.SUBARU_ASCENT_2023)
@@ -68,19 +67,19 @@ class TestSubaruLowSpeedAngleClamp:
     return vl["LKAS_Output"], vl["LKAS_Request"]
 
   def test_active_request_clamped_below_fault_angle(self):
-    # below the speed threshold a large desired is clamped under the fault angle, request held
+    # a large desired is clamped under the fault angle with the request held
     for sign in (-1, 1):
       self._reset_controller()
-      self.cc.apply_steer_last = sign * LKAS_ANGLE_LOW_SPEED_MAX
+      self.cc.apply_steer_last = sign * LKAS_ANGLE_MAX_ACTIVE
       output, request = self._update(desired=sign * 300., measured=sign * 150., v_ego=self.LOW_SPEED)
       assert request == 1
       assert not self.cc.lkas_angle_yield
-      assert output == pytest.approx(sign * LKAS_ANGLE_LOW_SPEED_MAX, abs=0.05)
+      assert output == pytest.approx(sign * LKAS_ANGLE_MAX_ACTIVE, abs=0.05)
 
   def test_no_request_chatter_through_boundary(self):
     # the request stays set the whole way up to the limit (active command pinned at the clamp), then
     # drops exactly once when the measured wheel reaches it — no sawtooth/chatter
-    self.cc.apply_steer_last = LKAS_ANGLE_LOW_SPEED_MAX
+    self.cc.apply_steer_last = LKAS_ANGLE_MAX_ACTIVE
     measured = 150.
     toggles = 0
     prev_req = 1
@@ -88,7 +87,7 @@ class TestSubaruLowSpeedAngleClamp:
     for _ in range(60):
       output, request = self._update(desired=300., measured=measured, v_ego=self.LOW_SPEED)
       if request == 1:
-        assert abs(output) <= LKAS_ANGLE_LOW_SPEED_MAX + 0.05   # active command never exceeds the limit
+        assert abs(output) <= LKAS_ANGLE_MAX_ACTIVE + 0.05   # active command never exceeds the limit
       if request != prev_req:
         toggles += 1
       if request == 0 and yielded_at is None:
@@ -96,12 +95,12 @@ class TestSubaruLowSpeedAngleClamp:
       prev_req = request
       measured = min(measured + 2., 210.)  # wheel climbs toward and past the limit
     assert toggles == 1
-    assert yielded_at >= LKAS_ANGLE_LOW_SPEED_MAX - 0.05
+    assert yielded_at >= LKAS_ANGLE_MAX_ACTIVE - 0.05
 
   def test_yield_when_measured_reaches_limit(self):
     for sign in (-1, 1):
       self._reset_controller()
-      measured = sign * LKAS_ANGLE_LOW_SPEED_MAX
+      measured = sign * LKAS_ANGLE_MAX_ACTIVE
       self.cc.apply_steer_last = measured
       output, request = self._update(desired=sign * 300., measured=measured, v_ego=self.LOW_SPEED)
       assert request == 0
@@ -116,8 +115,8 @@ class TestSubaruLowSpeedAngleClamp:
     assert self.cc.lkas_angle_yield
 
   def test_yield_hysteresis(self):
-    self.cc.apply_steer_last = LKAS_ANGLE_LOW_SPEED_MAX
-    self._update(desired=300., measured=LKAS_ANGLE_LOW_SPEED_MAX, v_ego=self.LOW_SPEED)
+    self.cc.apply_steer_last = LKAS_ANGLE_MAX_ACTIVE
+    self._update(desired=300., measured=LKAS_ANGLE_MAX_ACTIVE, v_ego=self.LOW_SPEED)
     assert self.cc.lkas_angle_yield
 
     # Remaining above the release boundary holds the yield (no chatter).
@@ -130,16 +129,16 @@ class TestSubaruLowSpeedAngleClamp:
     assert request == 1
     assert not self.cc.lkas_angle_yield
 
-  def test_high_speed_not_clamped_or_yielded(self):
-    self.cc.apply_steer_last = 250.
-    output, request = self._update(desired=250., measured=250., v_ego=self.HIGH_SPEED)
+  def test_clamp_applies_at_high_speed(self):
+    # the clamp is speed-independent: a large desired well above the old 10 mph gate is still clamped
+    self.cc.apply_steer_last = LKAS_ANGLE_MAX_ACTIVE
+    output, request = self._update(desired=300., measured=150., v_ego=self.HIGH_SPEED)
     assert request == 1
-    assert not self.cc.lkas_angle_yield
-    assert abs(output) > LKAS_ANGLE_LOW_SPEED_MAX  # not clamped above the speed threshold
+    assert output == pytest.approx(LKAS_ANGLE_MAX_ACTIVE, abs=0.05)
 
   def test_inactive_resets_yield(self):
-    self.cc.apply_steer_last = LKAS_ANGLE_LOW_SPEED_MAX
-    self._update(desired=300., measured=LKAS_ANGLE_LOW_SPEED_MAX, v_ego=self.LOW_SPEED)
+    self.cc.apply_steer_last = LKAS_ANGLE_MAX_ACTIVE
+    self._update(desired=300., measured=LKAS_ANGLE_MAX_ACTIVE, v_ego=self.LOW_SPEED)
     assert self.cc.lkas_angle_yield
 
     _, request = self._update(desired=0., measured=200., lat_active=False)

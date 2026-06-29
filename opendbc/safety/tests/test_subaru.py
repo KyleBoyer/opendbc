@@ -213,8 +213,10 @@ class TestSubaruAngleSafetyBase(TestSubaruSafetyBase, common.AngleSteeringSafety
   ANGLE_RATE_UP = [5, 0.15, 0.15]
   ANGLE_RATE_DOWN = [5, 0.4, 0.4]
 
-  LOW_SPEED_ANGLE_MAX = 200
-  LOW_SPEED_ANGLE_MAX_SPEED = 10 * CV.MPH_TO_MS
+  ACTIVE_ANGLE_MAX = 200
+  # representative speeds below and above the old 10 mph gate, to show the boundary is speed-independent
+  ACTIVE_ANGLE_MAX_SPEED_LOW = 5 * CV.MPH_TO_MS
+  ACTIVE_ANGLE_MAX_SPEED_HIGH = 15 * CV.MPH_TO_MS
 
   def _angle_cmd_msg(self, angle, enabled=1):
     values = {"LKAS_Output": angle, "LKAS_Request": enabled}
@@ -227,9 +229,9 @@ class TestSubaruAngleSafetyBase(TestSubaruSafetyBase, common.AngleSteeringSafety
 
   def test_angle_cmd_when_enabled(self):
     # Preserve the common rate-limit coverage while staying below Subaru's separate 200-degree
-    # active-request boundary at low speed.
+    # active-request boundary (enforced at all speeds).
     for speed in [0., 1., 5., 10., 15., 50.]:
-      angle_max_abs = 190 if speed < self.LOW_SPEED_ANGLE_MAX_SPEED else self.STEER_ANGLE_MAX + 10
+      angle_max_abs = 190
       angles = np.concatenate((np.arange(-angle_max_abs, angle_max_abs + 1, 5), [0]))
 
       for angle in angles:
@@ -255,35 +257,27 @@ class TestSubaruAngleSafetyBase(TestSubaruSafetyBase, common.AngleSteeringSafety
         self.safety.set_controls_allowed(False)
         self.assertEqual(abs(angle) <= self.STEER_ANGLE_MAX, self._tx(self._angle_cmd_msg(angle, False)))
 
-  def test_low_speed_active_angle_boundary(self):
+  def test_active_angle_boundary(self):
+    # active requests >= 200 deg fault the EPS and are blocked at every speed; just under is allowed,
+    # and inactive heartbeats must continue following the measured angle beyond 200 deg.
     for sign in (-1, 1):
-      with self.subTest(sign=sign):
-        low_speed = self.LOW_SPEED_ANGLE_MAX_SPEED - 0.1
-        high_speed = self.LOW_SPEED_ANGLE_MAX_SPEED + 0.1
+      for speed in (0.1, self.ACTIVE_ANGLE_MAX_SPEED_LOW, self.ACTIVE_ANGLE_MAX_SPEED_HIGH):
+        with self.subTest(sign=sign, speed=speed):
+          for angle, should_tx in ((self.ACTIVE_ANGLE_MAX - 0.01, True),
+                                   (self.ACTIVE_ANGLE_MAX, False)):
+            angle *= sign
+            self._reset_angle_measurement(angle)
+            self._reset_speed_measurement(speed)
+            self._set_prev_desired_angle(angle)
+            self.safety.set_controls_allowed(True)
+            self.assertEqual(should_tx, self._tx(self._angle_cmd_msg(angle, True)))
 
-        for angle, should_tx in ((self.LOW_SPEED_ANGLE_MAX - 0.01, True),
-                                 (self.LOW_SPEED_ANGLE_MAX, False)):
-          angle *= sign
+          # Inactive heartbeats follow measured angle beyond 200 degrees regardless of speed.
+          angle = 300 * sign
           self._reset_angle_measurement(angle)
-          self._reset_speed_measurement(low_speed)
-          self._set_prev_desired_angle(angle)
+          self._reset_speed_measurement(speed)
           self.safety.set_controls_allowed(True)
-          self.assertEqual(should_tx, self._tx(self._angle_cmd_msg(angle, True)))
-
-        # The same request is allowed above the low-speed boundary.
-        angle = self.LOW_SPEED_ANGLE_MAX * sign
-        self._reset_angle_measurement(angle)
-        self._reset_speed_measurement(high_speed)
-        self._set_prev_desired_angle(angle)
-        self.safety.set_controls_allowed(True)
-        self.assertTrue(self._tx(self._angle_cmd_msg(angle, True)))
-
-        # Inactive heartbeats must continue following measured angle beyond 200 degrees.
-        angle = 300 * sign
-        self._reset_angle_measurement(angle)
-        self._reset_speed_measurement(low_speed)
-        self.safety.set_controls_allowed(True)
-        self.assertTrue(self._tx(self._angle_cmd_msg(angle, False)))
+          self.assertTrue(self._tx(self._angle_cmd_msg(angle, False)))
 
   def test_steering_torque_angle_does_not_override_steering_2(self):
     # This reproduces a real inactive-frame rejection: Steering_2 and the command reported -14.10 deg,
