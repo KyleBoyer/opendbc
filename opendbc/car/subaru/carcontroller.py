@@ -41,19 +41,27 @@ class CarController(CarControllerBase):
       apply_steer = 0
       apply_torque = 0
       if self.CP.flags & SubaruFlags.LKAS_ANGLE:
-        apply_steer = apply_std_steer_angle_limits(actuators.steeringAngleDeg, self.apply_steer_last, CS.out.vEgoRaw,
+        # Clamp desired target to within MAX_ANGLE_TRACKING_ERROR of actual BEFORE rate-limiting
+        # so the rate limiter never produces a value outside panda's per-frame rate budget.
+        desired = actuators.steeringAngleDeg
+        if CC.latActive:
+          desired = float(np.clip(desired,
+                                  CS.out.steeringAngleDeg - MAX_ANGLE_TRACKING_ERROR,
+                                  CS.out.steeringAngleDeg + MAX_ANGLE_TRACKING_ERROR))
+
+        apply_steer = apply_std_steer_angle_limits(desired, self.apply_steer_last, CS.out.vEgoRaw,
                                                    CS.out.steeringAngleDeg, CC.latActive, CarControllerParams.ANGLE_LIMITS)
 
+        apply_steer_req = CC.latActive
         if not CC.latActive:
           apply_steer = CS.out.steeringAngleDeg
-        else:
-          # Clamp command to within MAX_ANGLE_TRACKING_ERROR of actual to prevent the EPS from
-          # faulting (Steer_Error_1) when the commanded angle races too far ahead of the wheel.
-          apply_steer = float(np.clip(apply_steer,
-                                      CS.out.steeringAngleDeg - MAX_ANGLE_TRACKING_ERROR,
-                                      CS.out.steeringAngleDeg + MAX_ANGLE_TRACKING_ERROR))
+        elif abs(apply_steer - CS.out.steeringAngleDeg) > MAX_ANGLE_TRACKING_ERROR:
+          # Rate and tracking constraints are mutually impossible (e.g. rapid driver countersteer).
+          # Keep the EPS heartbeat alive by sending measured angle without LKAS_Request.
+          apply_steer = CS.out.steeringAngleDeg
+          apply_steer_req = False
 
-        can_sends.append(subarucan.create_steering_control_angle(self.packer, apply_steer, CC.latActive))
+        can_sends.append(subarucan.create_steering_control_angle(self.packer, apply_steer, apply_steer_req))
         self.apply_steer_last = apply_steer
 
       # torque-based steering
