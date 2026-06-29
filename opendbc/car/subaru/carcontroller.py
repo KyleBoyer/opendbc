@@ -12,12 +12,16 @@ from opendbc.car.subaru.values import DBC, GLOBAL_ES_ADDR, CanBus, CarController
 MAX_STEER_RATE = 25  # deg/s
 MAX_STEER_RATE_FRAMES = 7  # tx control frames needed before torque can be cut
 
-# Modern Subaru angle-LKAS EPS units hard-fault when an active steering request reaches about
-# 200 degrees below 10 mph. Yield before that boundary, but continue sending the measured angle
-# with LKAS_Request clear so the EPS keeps receiving its heartbeat at full physical steering lock.
-LKAS_ANGLE_YIELD_ANGLE = 190.0
-LKAS_ANGLE_YIELD_RELEASE_ANGLE = 180.0
-LKAS_ANGLE_YIELD_SPEED = 10.0 * CV.MPH_TO_MS
+# Modern Subaru angle-LKAS EPS units hard-fault when an ACTIVE steering request reaches ~200 deg
+# below ~10 mph (an independent tester confirmed 199 deg works, 200 deg faults; it is the requested
+# LKAS_Output that matters, not the measured wheel). Below that speed, clamp the active request just
+# under the limit so the wheel still steers to near full low-speed lock without faulting, while
+# keeping LKAS_Request set (no request-bit chatter). Only once the measured wheel itself reaches the
+# limit do we drop the request and track the measured angle (heartbeat), so we neither request past
+# the fault angle nor fight the wheel at full lock. Hysteresis on the release avoids chatter.
+LKAS_ANGLE_LOW_SPEED_MAX = 195.0   # deg; max active request magnitude below LKAS_ANGLE_LOW_SPEED
+LKAS_ANGLE_YIELD_RELEASE = 185.0   # deg; measured must fall below this to resume active control
+LKAS_ANGLE_LOW_SPEED = 10.0 * CV.MPH_TO_MS
 
 
 class CarController(CarControllerBase):
@@ -49,21 +53,25 @@ class CarController(CarControllerBase):
         apply_steer = apply_std_steer_angle_limits(actuators.steeringAngleDeg, self.apply_steer_last, CS.out.vEgoRaw,
                                                    CS.out.steeringAngleDeg, CC.latActive, CarControllerParams.ANGLE_LIMITS)
         apply_steer_req = CC.latActive
+        low_speed = CS.out.vEgoRaw < LKAS_ANGLE_LOW_SPEED
 
+        # Never actively request an angle the low-speed EPS will fault on. Clamping (rather than
+        # dropping the request) lets the wheel keep steering to the limit without request-bit chatter.
+        if CC.latActive and low_speed:
+          apply_steer = float(np.clip(apply_steer, -LKAS_ANGLE_LOW_SPEED_MAX, LKAS_ANGLE_LOW_SPEED_MAX))
+
+        # Once the measured wheel reaches the low-speed limit, stop actively requesting and track the
+        # measured angle (heartbeat) so we don't fight the wheel at full lock. Hysteresis on the
+        # release keeps the request bit from chattering at the boundary.
         if not CC.latActive:
           self.lkas_angle_yield = False
-        elif self.lkas_angle_yield:
-          angle_recovered = max(abs(apply_steer), abs(CS.out.steeringAngleDeg)) < LKAS_ANGLE_YIELD_RELEASE_ANGLE
-          if angle_recovered:
-            self.lkas_angle_yield = False
-        else:
-          angle_at_boundary = max(abs(apply_steer), abs(CS.out.steeringAngleDeg)) >= LKAS_ANGLE_YIELD_ANGLE
-          if CS.out.vEgoRaw < LKAS_ANGLE_YIELD_SPEED and angle_at_boundary:
+        elif not self.lkas_angle_yield:
+          if low_speed and abs(CS.out.steeringAngleDeg) >= LKAS_ANGLE_LOW_SPEED_MAX:
             self.lkas_angle_yield = True
+        elif (not low_speed) or (abs(CS.out.steeringAngleDeg) < LKAS_ANGLE_YIELD_RELEASE):
+          self.lkas_angle_yield = False
 
         if not CC.latActive or self.lkas_angle_yield:
-          # Match the stock camera's inactive behavior: keep the EPS heartbeat tracking the measured
-          # wheel angle while dropping LKAS_Request.
           apply_steer = CS.out.steeringAngleDeg
           apply_steer_req = False
 
