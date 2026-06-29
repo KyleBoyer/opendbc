@@ -192,13 +192,15 @@ static bool subaru_tx_hook(const CANPacket_t *msg) {
       {0., 15., 15.},
       {5.,  .4,  .4}
     },
-    // The EPS (Steer_Error_1) faults if the command leads the measured wheel angle by too much.
-    // Enforce a tracking-error boundary as a backstop to openpilot's clamp. Enforced at every
-    // positive speed (a true standstill is exempt) since the observed fault occurs during
-    // low-speed tight turns; Subaru's Steering_2 angle is accurate enough at low speed to avoid
-    // false positives. When already outside the boundary, panda still permits compliant recovery
-    // commands moving back toward measured, so the EPS heartbeat is never starved.
-    .max_angle_error = 45*100,
+    // The LKAS_ANGLE EPS latches a permanent Steer_Error_1 when the commanded angle diverges from
+    // the measured wheel by too much for too long (this is the EPS's angle-tracking protection,
+    // not a torque limit). Enforce a tracking-error boundary as a backstop to openpilot's clamp.
+    // Enforced at every positive speed (a true standstill is exempt) since the observed fault
+    // occurs during low-speed tight turns; Subaru's Steering_2 angle is accurate enough at low
+    // speed to avoid false positives. When already outside the boundary, panda still permits
+    // compliant recovery commands moving back toward measured, so the EPS heartbeat is never
+    // starved. Keep this matched to MAX_ANGLE_TRACKING_ERROR in the carcontroller.
+    .max_angle_error = 20*100,
     .angle_error_min_speed = 0.,
     .enforce_angle_error = true,
   };

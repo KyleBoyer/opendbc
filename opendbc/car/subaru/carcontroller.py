@@ -12,9 +12,16 @@ MAX_STEER_RATE = 25  # deg/s
 MAX_STEER_RATE_FRAMES = 7  # tx control frames needed before torque can be cut
 
 # Max degrees the LKAS_ANGLE command can lead the measured wheel angle.
-# The EPS faults (Steer_Error_1) if the tracking error exceeds ~60° for ~1s;
-# 45° gives a comfortable margin while still allowing fast tight-turn commands.
-MAX_ANGLE_TRACKING_ERROR = 45.  # deg
+# The LKAS_ANGLE EPS latches a permanent Steer_Error_1 when the commanded angle diverges from the
+# measured wheel by too much for too long (~40° sustained ~0.85s was observed to fault even with a
+# 45° clamp). This is the EPS's angle-tracking protection, not a torque/thermal limit: the same EPS
+# delivers >6000 units of torque under driver steering at standstill without faulting.
+# Keeping this small makes the command hug the measured wheel: it does not slow the wheel (the EPS
+# still slews at its physical max), it only stops the command from running ahead and manufacturing
+# the sustained-divergence condition the EPS rejects. In healthy operation the tracking error is
+# ~0°, so there is wide margin here. Start conservative and tune up toward the EPS limit; a latched
+# fault costs steering for the rest of the drive.
+MAX_ANGLE_TRACKING_ERROR = 20.  # deg
 
 
 class CarController(CarControllerBase):

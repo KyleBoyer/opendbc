@@ -268,10 +268,10 @@ class TestSubaruAngleSafetyBase(TestSubaruSafetyBase, common.AngleSteeringSafety
 
   def test_angle_error_enforcement(self):
     # enforce_angle_error backstops the EPS tracking fault: while moving, a command may not lead
-    # the measured wheel angle by more than max_angle_error (45 deg). At a true standstill the
+    # the measured wheel angle by more than max_angle_error (20 deg). At a true standstill the
     # boundary is not enforced (angle_error_min_speed = 0). Commands beyond max_angle are clamped.
     # Checked in both steering directions for symmetry.
-    MAX_ERROR = 45.0
+    MAX_ERROR = 20.0
     meas = 0.0
 
     for sign in (1, -1):
