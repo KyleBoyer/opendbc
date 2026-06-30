@@ -189,6 +189,22 @@ class TestSubaruAngleClamp:
     assert request == 1
     assert not self.cc.driver_override
 
+  def test_yield_persists_through_driver_override(self):
+    # engage the angle yield at the limit
+    self.cc.apply_steer_last = LKAS_ANGLE_MAX_ACTIVE
+    self._update(desired=300., measured=LKAS_ANGLE_MAX_ACTIVE, v_ego=self.LOW_SPEED)
+    assert self.cc.lkas_angle_yield
+
+    # driver overrides while the model still wants the turn and the wheel is still high
+    self._update(desired=300., measured=184., driver_torque=STEER_OVERRIDE_TORQUE_HIGH + 50., v_ego=self.LOW_SPEED)
+    assert self.cc.lkas_angle_yield  # override must not clear the yield
+
+    # driver releases torque: must keep tracking measured (req=0), not re-grab a leading clamped command
+    output, request = self._update(desired=300., measured=184., driver_torque=0., v_ego=self.LOW_SPEED)
+    assert self.cc.lkas_angle_yield
+    assert request == 0
+    assert output == pytest.approx(184., abs=0.05)
+
 
 class TestSubaruParams:
   def test_ascent_steer_actuator_delays(self):
