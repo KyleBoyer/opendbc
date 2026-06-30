@@ -45,13 +45,16 @@ class TestSubaruAngleClamp:
     # decode the angle command the controller transmits
     self.parser = CANParser(DBC[self.CP.carFingerprint][Bus.pt], [("ES_LKAS_ANGLE", 0)], CanBus.main)
 
-  def _update(self, desired=150., measured=150., lat_active=True, v_ego=2.0, driver_torque=0.):
+  def _update(self, desired=150., measured=150., lat_active=True, v_ego=2.0, driver_torque=0., directional_override=True):
     """Run one steering frame and return the decoded (LKAS_Output, LKAS_Request)."""
     CC = structs.CarControl()
     CC.enabled = lat_active
     CC.latActive = lat_active
     CC.longActive = False
     CC.actuators.steeringAngleDeg = desired
+
+    CC_SP = structs.CarControlSP()
+    CC_SP.subaruDirectionalSteerOverride = directional_override
 
     CS = structs.CarState()
     CS.steeringAngleDeg = measured
@@ -62,7 +65,7 @@ class TestSubaruAngleClamp:
       out = CS
     # Steer-only frame (frame % STEER_STEP == 0, frame % 10 != 0): only ES_LKAS_ANGLE is emitted.
     self.cc.frame = 2
-    _, can_sends = self.cc.update(CC.as_reader(), self.CP_SP, _CS(), 0)
+    _, can_sends = self.cc.update(CC.as_reader(), CC_SP, _CS(), 0)
 
     self.parser.update([0, can_sends])
     vl = self.parser.vl["ES_LKAS_ANGLE"]
@@ -171,23 +174,47 @@ class TestSubaruAngleClamp:
     assert output == pytest.approx(300., abs=0.05)
 
   def test_driver_override_drops_request(self):
-    # high driver torque drops the active request (anchored to measured) so the driver steers freely
+    # high opposing driver torque drops the active request (anchored to measured) so the driver
+    # steers freely - desired is positive (turning right), torque is negative (driver pulling back)
     self.cc.apply_steer_last = 150.
-    output, request = self._update(desired=250., measured=150., driver_torque=STEER_OVERRIDE_TORQUE_HIGH + 20.)
+    output, request = self._update(desired=250., measured=150., driver_torque=-(STEER_OVERRIDE_TORQUE_HIGH + 20.))
     assert request == 0
     assert self.cc.driver_override
     assert output == pytest.approx(150., abs=0.05)
 
     # hysteresis: torque between the thresholds keeps the override engaged
     _, request = self._update(desired=250., measured=150.,
-                              driver_torque=(STEER_OVERRIDE_TORQUE_HIGH + STEER_OVERRIDE_TORQUE_LOW) // 2)
+                              driver_torque=-((STEER_OVERRIDE_TORQUE_HIGH + STEER_OVERRIDE_TORQUE_LOW) // 2))
     assert request == 0
     assert self.cc.driver_override
 
     # once torque is released, active control resumes
-    _, request = self._update(desired=250., measured=150., driver_torque=STEER_OVERRIDE_TORQUE_LOW - 20.)
+    _, request = self._update(desired=250., measured=150., driver_torque=-(STEER_OVERRIDE_TORQUE_LOW - 20.))
     assert request == 1
     assert not self.cc.driver_override
+
+  def test_directional_override_ignores_same_direction_torque(self):
+    # with directional override on (default), high torque in the SAME direction as the commanded
+    # angle (helping the turn) must not drop the request
+    _, request = self._update(desired=250., measured=150., driver_torque=STEER_OVERRIDE_TORQUE_HIGH + 50.,
+                              directional_override=True)
+    assert request == 1
+    assert not self.cc.driver_override
+
+  def test_directional_override_disabled_is_magnitude_only(self):
+    # with the toggle off, same-direction high torque still drops the request (legacy behavior)
+    output, request = self._update(desired=250., measured=150., driver_torque=STEER_OVERRIDE_TORQUE_HIGH + 50.,
+                                   directional_override=False)
+    assert request == 0
+    assert self.cc.driver_override
+    assert output == pytest.approx(150., abs=0.05)
+
+  def test_directional_override_near_zero_angle_falls_back_to_magnitude(self):
+    # commanded angle near straight-ahead: direction is unreliable, so any high torque overrides
+    output, request = self._update(desired=2., measured=0., driver_torque=STEER_OVERRIDE_TORQUE_HIGH + 50.,
+                                   directional_override=True)
+    assert request == 0
+    assert self.cc.driver_override
 
   def test_yield_resets_on_driver_override(self):
     # engage the angle yield at the limit
@@ -195,9 +222,10 @@ class TestSubaruAngleClamp:
     self._update(desired=300., measured=LKAS_ANGLE_MAX_ACTIVE, v_ego=self.LOW_SPEED)
     assert self.cc.lkas_angle_yield
 
-    # driver overrides while the model still wants the turn and the wheel is still high - this clears
-    # the yield (override counts as not lat_active), by design: confirms LKAS strength to the driver
-    self._update(desired=300., measured=184., driver_torque=STEER_OVERRIDE_TORQUE_HIGH + 50., v_ego=self.LOW_SPEED)
+    # driver overrides (opposing torque) while the model still wants the turn and the wheel is still
+    # high - this clears the yield (override counts as not lat_active), by design: confirms LKAS
+    # strength to the driver
+    self._update(desired=300., measured=184., driver_torque=-(STEER_OVERRIDE_TORQUE_HIGH + 50.), v_ego=self.LOW_SPEED)
     assert not self.cc.lkas_angle_yield
 
     # once the driver releases, active control resumes immediately (snap-back toward the clamped

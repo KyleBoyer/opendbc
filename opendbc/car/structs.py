@@ -121,6 +121,7 @@ class CarControlSP:
   params: list['CarControlSP.Param'] = auto_field()
   leadOne: 'LeadData' = field(default_factory=lambda: LeadData())
   leadTwo: 'LeadData' = field(default_factory=lambda: LeadData())
+  subaruDirectionalSteerOverride: bool = auto_field()
 
   @auto_dataclass
   class Param:

@@ -30,6 +30,12 @@ LKAS_ANGLE_YIELD_RELEASE = 185.0  # deg; measured must fall below this to resume
 STEER_OVERRIDE_TORQUE_HIGH = 100  # enter override
 STEER_OVERRIDE_TORQUE_LOW = 60    # exit override
 
+# When directional override is enabled (CC_SP.subaruDirectionalSteerOverride), only treat torque that
+# opposes the commanded angle as an override - pushing hard in the same direction (helping the turn)
+# no longer drops the active request. Below this commanded angle, direction is unreliable (straight-
+# ahead noise), so fall back to magnitude-only gating.
+STEER_OVERRIDE_ANGLE_SIGN_FLOOR = 5.0  # deg
+
 
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP, CP_SP):
@@ -60,8 +66,15 @@ class CarController(CarControllerBase):
       if self.CP.flags & SubaruFlags.LKAS_ANGLE:
         # Driver override: once the driver applies steering torque, stop actively requesting so they
         # can steer freely (e.g. ease out of a turn the model still wants to hold). Hysteresis.
+        # When directional override is on, only entering torque that opposes the commanded angle
+        # counts - pushing hard with the turn (helping) no longer drops the active request. Exit
+        # (torque below _LOW) stays direction-agnostic so override always clears once the driver
+        # relaxes, regardless of which way they were pushing.
         abs_driver_torque = abs(CS.out.steeringTorque)
-        if abs_driver_torque > STEER_OVERRIDE_TORQUE_HIGH:
+        desired_angle = actuators.steeringAngleDeg
+        opposing = (not CC_SP.subaruDirectionalSteerOverride or abs(desired_angle) <= STEER_OVERRIDE_ANGLE_SIGN_FLOOR
+                    or CS.out.steeringTorque * desired_angle < 0)
+        if abs_driver_torque > STEER_OVERRIDE_TORQUE_HIGH and opposing:
           self.driver_override = True
         elif abs_driver_torque < STEER_OVERRIDE_TORQUE_LOW:
           self.driver_override = False
