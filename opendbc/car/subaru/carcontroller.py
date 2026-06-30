@@ -82,10 +82,10 @@ class CarController(CarControllerBase):
         # model request and the measured wheel fall below the release angle: releasing while the model
         # still wants a large angle re-engages an active command that pushes against the (overshooting
         # or exiting) wheel, which jerks the steering. Releasing only when the turn is genuinely
-        # ending lets the command track the wheel back down smoothly. The yield is reset only when
-        # truly inactive (not driver override): a driver override that clears while the model still
-        # requests a tight turn must not re-grab a leading command at a still-high wheel angle.
-        if not CC.latActive:
+        # ending lets the command track the wheel back down smoothly. The yield resets on driver
+        # override clearing too (lat_active, not CC.latActive) so the system resumes tracking as soon
+        # as the driver lets go - the resulting snap-back is intentional, confirming LKAS strength.
+        if not lat_active:
           self.lkas_angle_yield = False
         elif not self.lkas_angle_yield:
           if abs(CS.out.steeringAngleDeg) >= LKAS_ANGLE_MAX_ACTIVE:
