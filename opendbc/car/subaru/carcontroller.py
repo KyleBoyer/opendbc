@@ -31,9 +31,13 @@ STEER_OVERRIDE_TORQUE_HIGH = 100  # enter override
 STEER_OVERRIDE_TORQUE_LOW = 60    # exit override
 
 # When directional override is enabled (CC_SP.subaruDirectionalSteerOverride), only treat torque that
-# opposes the commanded angle as an override - pushing hard in the same direction (helping the turn)
-# no longer drops the active request. Below this commanded angle, direction is unreliable (straight-
-# ahead noise), so fall back to magnitude-only gating.
+# opposes the requested motion (desired - measured, i.e. which way we're actually trying to move the
+# wheel from here) as an override - pushing hard in that same direction (helping) no longer drops the
+# active request. Comparing against raw desired angle instead of the delta would misclassify e.g.
+# unwind assistance: desired=100/measured=150 (unwinding toward 100) with the driver helping via
+# negative torque is genuinely assisting, even though desired_angle itself is still positive. Below
+# this much requested motion, direction is unreliable (steady-state tracking / straight-ahead noise),
+# so fall back to magnitude-only gating.
 STEER_OVERRIDE_ANGLE_SIGN_FLOOR = 5.0  # deg
 
 
@@ -66,17 +70,18 @@ class CarController(CarControllerBase):
       if self.CP.flags & SubaruFlags.LKAS_ANGLE:
         # Driver override: once the driver applies steering torque, stop actively requesting so they
         # can steer freely (e.g. ease out of a turn the model still wants to hold). Hysteresis.
-        # When directional override is on, only entering torque that opposes the commanded angle
-        # counts - pushing hard with the turn (helping) no longer drops the active request. Exit
-        # (torque below _LOW) stays direction-agnostic so override always clears once the driver
-        # relaxes, regardless of which way they were pushing.
+        # When directional override is on, only torque that opposes the requested motion counts -
+        # pushing hard the same way we're already trying to move (helping) never latches an override,
+        # and if the driver flips from opposing to helping mid-override it clears immediately rather
+        # than waiting for torque to fall below _LOW. Direction-agnostic torque-magnitude exit still
+        # applies too, so a driver who just relaxes (regardless of direction) always regains control.
         abs_driver_torque = abs(CS.out.steeringTorque)
-        desired_angle = actuators.steeringAngleDeg
-        opposing = (not CC_SP.subaruDirectionalSteerOverride or abs(desired_angle) <= STEER_OVERRIDE_ANGLE_SIGN_FLOOR
-                    or CS.out.steeringTorque * desired_angle < 0)
+        requested_motion = actuators.steeringAngleDeg - CS.out.steeringAngleDeg
+        opposing = (not CC_SP.subaruDirectionalSteerOverride or abs(requested_motion) <= STEER_OVERRIDE_ANGLE_SIGN_FLOOR
+                    or CS.out.steeringTorque * requested_motion < 0)
         if abs_driver_torque > STEER_OVERRIDE_TORQUE_HIGH and opposing:
           self.driver_override = True
-        elif abs_driver_torque < STEER_OVERRIDE_TORQUE_LOW:
+        elif abs_driver_torque < STEER_OVERRIDE_TORQUE_LOW or not opposing:
           self.driver_override = False
         lat_active = CC.latActive and not self.driver_override
 

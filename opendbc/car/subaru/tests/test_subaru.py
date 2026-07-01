@@ -216,6 +216,41 @@ class TestSubaruAngleClamp:
     assert request == 0
     assert self.cc.driver_override
 
+  def test_directional_override_unwind_assist_not_misclassified(self):
+    # model is unwinding (desired=100 < measured=150, both positive - reducing the turn) and the
+    # driver helps by pushing toward center (negative torque, matching the requested motion toward
+    # desired) - even though desired_angle itself is still positive, comparing against the requested
+    # motion (desired - measured) rather than raw desired_angle must not misclassify this as opposing
+    _, request = self._update(desired=100., measured=150., driver_torque=-(STEER_OVERRIDE_TORQUE_HIGH + 50.),
+                              directional_override=True)
+    assert request == 1
+    assert not self.cc.driver_override
+
+  def test_directional_override_clears_on_direction_flip_without_dropping_below_low(self):
+    # latch an opposing override
+    self._update(desired=250., measured=150., driver_torque=-(STEER_OVERRIDE_TORQUE_HIGH + 50.),
+                 directional_override=True)
+    assert self.cc.driver_override
+
+    # torque flips to assisting (same direction as the requested motion) while staying well above
+    # _LOW - override must clear immediately, not wait for magnitude to fall below 60
+    _, request = self._update(desired=250., measured=150., driver_torque=STEER_OVERRIDE_TORQUE_HIGH + 50.,
+                              directional_override=True)
+    assert request == 1
+    assert not self.cc.driver_override
+
+  def test_magnitude_only_stays_latched_through_direction_flip(self):
+    # with the toggle off, a direction flip at sustained high torque must NOT clear the override -
+    # legacy magnitude-only hysteresis is unaffected by the directional exit path
+    self._update(desired=250., measured=150., driver_torque=-(STEER_OVERRIDE_TORQUE_HIGH + 50.),
+                 directional_override=False)
+    assert self.cc.driver_override
+
+    _, request = self._update(desired=250., measured=150., driver_torque=STEER_OVERRIDE_TORQUE_HIGH + 50.,
+                              directional_override=False)
+    assert self.cc.driver_override
+    assert request == 0
+
   def test_yield_resets_on_driver_override(self):
     # engage the angle yield at the limit
     self.cc.apply_steer_last = LKAS_ANGLE_MAX_ACTIVE
