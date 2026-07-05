@@ -270,6 +270,110 @@ class TestSubaruAngleClamp:
     assert output > 184.
 
 
+def panda_angle_check(desired_deg, desired_last_deg, v_ego, active, measured_deg):
+  """Port of panda's steer_angle_cmd_checks() rate/bound logic for Subaru (angle_deg_to_can=100).
+  Returns True on violation (frame would be blocked). Mirrors opendbc/safety/lateral.h including the
+  CAN quantization of desired_angle_last, the -1 m/s speed fudge, and the +1 unit margin."""
+  import numpy as np
+  limits = CarControllerParams.ANGLE_LIMITS
+  to_can = 100.
+  desired = round(desired_deg * to_can)
+  desired_last = round(desired_last_deg * to_can)
+  if active:
+    fudged_speed = v_ego - 1.
+    delta_up = int(np.interp(fudged_speed, limits.ANGLE_RATE_LIMIT_UP[0], limits.ANGLE_RATE_LIMIT_UP[1]) * to_can + 1.)
+    delta_down = int(np.interp(fudged_speed, limits.ANGLE_RATE_LIMIT_DOWN[0], limits.ANGLE_RATE_LIMIT_DOWN[1]) * to_can + 1.)
+    highest = desired_last + (delta_up if desired_last > 0 else delta_down)
+    lowest = desired_last - (delta_down if desired_last >= 0 else delta_up)
+    return desired > highest or desired < lowest
+  max_angle = limits.STEER_ANGLE_MAX * to_can
+  meas = round(measured_deg * to_can)
+  return desired > min(max(meas, -max_angle), max_angle) + 1 or desired < min(max(meas, -max_angle), max_angle) - 1
+
+
+class TestSubaruPandaRateSync:
+  """Regression tests for the 2026-07-04 highway EPS fault: re-engaging from a last command that
+  quantized to exactly 0 on CAN emitted a wind-up-rate first frame (0.8 deg) that panda's at-zero
+  down-rate bound (0.4 deg) rejected; panda then re-anchored to measured while the controller kept
+  ramping, blocking every subsequent frame until the EPS lost its heartbeat and latched Steer_Error_1."""
+
+  HWY_SPEED = 26.8  # m/s, from the fault log
+
+  def setup_method(self):
+    self.CP = CarInterface.get_non_essential_params(CAR.SUBARU_ASCENT_2023)
+    self.CP_SP = structs.CarParamsSP()
+    self.cc = CarController(DBC[self.CP.carFingerprint], self.CP, self.CP_SP)
+    self.parser = CANParser(DBC[self.CP.carFingerprint][Bus.pt], [("ES_LKAS_ANGLE", 0)], CanBus.main)
+
+  def _update(self, desired, measured, lat_active=True, v_ego=26.8, driver_torque=0.):
+    CC = structs.CarControl()
+    CC.enabled = lat_active
+    CC.latActive = lat_active
+    CC.actuators.steeringAngleDeg = desired
+
+    CC_SP = structs.CarControlSP()
+    CC_SP.subaruDirectionalSteerOverride = True
+
+    CS = structs.CarState()
+    CS.steeringAngleDeg = measured
+    CS.vEgoRaw = v_ego
+    CS.steeringTorque = driver_torque
+
+    class _CS:
+      out = CS
+    self.cc.frame = 2
+    _, can_sends = self.cc.update(CC.as_reader(), CC_SP, _CS(), 0)
+    self.parser.update([0, can_sends])
+    vl = self.parser.vl["ES_LKAS_ANGLE"]
+    return vl["LKAS_Output"], vl["LKAS_Request"]
+
+  def test_reengage_from_zero_respects_panda_down_rate(self):
+    # exact fault scenario: inactive command tracked measured to exactly 0.00, then re-engage with the
+    # model wanting 1.34 deg at 26.8 m/s. First active frame must stay within panda's at-zero
+    # allowance (down rate, 0.4 deg), not the 0.8 deg wind-up rate that got blocked on-road.
+    self.cc.apply_steer_last = 0.0
+    output, request = self._update(desired=1.34, measured=0.0)
+    assert request == 1
+    assert abs(output) <= 0.4 + 1e-6
+    assert not panda_angle_check(output, 0.0, self.HWY_SPEED, True, 0.0)
+
+  def test_reengagement_ramp_never_blocked(self):
+    # replay the full fault sequence against the panda-check port: re-engage from 0 and ramp toward a
+    # distant model desired. Every active frame must pass panda's check (desired_last advances only
+    # when a frame passes, matching panda's re-anchor-on-violation behavior making any single
+    # violation self-sustaining).
+    self.cc.apply_steer_last = 0.0
+    panda_last = 0.0
+    for _ in range(50):
+      output, request = self._update(desired=10., measured=0.05)
+      assert request == 1
+      assert not panda_angle_check(output, panda_last, self.HWY_SPEED, True, 0.05)
+      panda_last = output
+
+  def test_reengage_crossing_zero_respects_panda_down_rate(self):
+    # same corner from the negative side: last command quantizes to 0 from below, model wants negative
+    self.cc.apply_steer_last = -0.004  # rounds to 0 on CAN, panda's reference is 0
+    output, request = self._update(desired=-1.34, measured=0.0)
+    assert request == 1
+    assert not panda_angle_check(output, 0.0, self.HWY_SPEED, True, 0.0)
+
+  def test_low_speed_unaffected(self):
+    # below ~15 m/s the up/down rates converge, so re-engagement authority is not reduced
+    self.cc.apply_steer_last = 0.0
+    output, request = self._update(desired=10., measured=0.0, v_ego=2.0)
+    assert request == 1
+    assert output > 3.  # near the ~4.4 deg/frame low-speed rate, not crippled by the fix
+    assert not panda_angle_check(output, 0.0, 2.0, True, 0.0)
+
+  def test_inactive_full_lock_heartbeat_not_blocked(self):
+    # wheel physically past STEER_ANGLE_MAX while inactive: heartbeat must clamp so panda's
+    # inactive bound (clamped measured +/- 1 unit) doesn't block it
+    output, request = self._update(desired=0., measured=560., lat_active=False)
+    assert request == 0
+    assert output == pytest.approx(CarControllerParams.ANGLE_LIMITS.STEER_ANGLE_MAX, abs=0.05)
+    assert not panda_angle_check(output, 560., self.HWY_SPEED, False, 560.)
+
+
 class TestSubaruParams:
   def test_ascent_steer_actuator_delays(self):
     assert CarInterface.get_non_essential_params(CAR.SUBARU_ASCENT).steerActuatorDelay == pytest.approx(0.3)

@@ -40,6 +40,37 @@ STEER_OVERRIDE_TORQUE_LOW = 60    # exit override
 # so fall back to magnitude-only gating.
 STEER_OVERRIDE_ANGLE_SIGN_FLOOR = 5.0  # deg
 
+# LKAS_Output CAN scaling: 0.01 deg/unit. Panda rate-limits the CAN-quantized command, so the
+# controller must reason in the same quantized space (a float command of 0.004 deg becomes 0 on the
+# wire, and panda's reference is that 0, not our float state).
+LKAS_ANGLE_CAN_QUANT = 0.01  # deg per CAN unit
+
+
+def _panda_angle_rate_clamp(apply_angle: float, apply_angle_last: float, v_ego: float) -> float:
+  """Mirror panda's steer_angle_cmd_checks() rate bounds so an active frame can never be blocked.
+
+  apply_std_steer_angle_limits() classifies a step off exactly-zero as wind UP (0.8 deg/frame at
+  highway speed), but panda at a zero last-command allows only the DOWN rate (0.4 deg/frame) in both
+  directions ("allow down limits at zero"). A re-engagement whose last (inactive, measured-tracking)
+  command quantized to exactly 0 on CAN could therefore emit a first frame panda rejects. Panda then
+  re-anchors its reference to the measured angle while this controller keeps ramping toward the model
+  desired, so EVERY subsequent frame is also rejected: the EPS loses its ES_LKAS_ANGLE heartbeat and
+  hard-faults (Steer_Error_1) after ~300 ms. Observed on-road at 60 mph: re-engage from 0.00 deg,
+  first command 0.80 deg, 15 consecutive blocked frames, permanent EPS fault.
+
+  Panda's bounds are built from its CAN-quantized last command with a -1 m/s speed fudge and +1 CAN
+  unit of margin, so clamping here to the UNfudged bounds around the same quantized reference is
+  strictly tighter than what panda allows - a frame we emit can never violate, which also prevents
+  the controller/panda reference divergence that made the block self-sustaining.
+  """
+  quant_last = round(apply_angle_last / LKAS_ANGLE_CAN_QUANT) * LKAS_ANGLE_CAN_QUANT
+  limits = CarControllerParams.ANGLE_LIMITS
+  rate_up = np.interp(v_ego, limits.ANGLE_RATE_LIMIT_UP[0], limits.ANGLE_RATE_LIMIT_UP[1])
+  rate_down = np.interp(v_ego, limits.ANGLE_RATE_LIMIT_DOWN[0], limits.ANGLE_RATE_LIMIT_DOWN[1])
+  highest = quant_last + (rate_up if quant_last > 0 else rate_down)
+  lowest = quant_last - (rate_down if quant_last >= 0 else rate_up)
+  return float(np.clip(apply_angle, lowest, highest))
+
 
 class CarController(CarControllerBase):
   def __init__(self, dbc_names, CP, CP_SP):
@@ -93,6 +124,7 @@ class CarController(CarControllerBase):
         # speed-gate discontinuity). Clamping rather than dropping the request lets the wheel keep
         # steering to the limit without request-bit chatter.
         if lat_active:
+          apply_steer = _panda_angle_rate_clamp(apply_steer, self.apply_steer_last, CS.out.vEgoRaw)
           apply_steer = float(np.clip(apply_steer, -LKAS_ANGLE_MAX_ACTIVE, LKAS_ANGLE_MAX_ACTIVE))
 
         # Once the measured wheel reaches the limit, stop actively requesting and track the measured
@@ -112,7 +144,11 @@ class CarController(CarControllerBase):
           self.lkas_angle_yield = False
 
         if not lat_active or self.lkas_angle_yield:
-          apply_steer = CS.out.steeringAngleDeg
+          # panda bounds inactive commands to +/-(max_angle + 1 unit); a wheel physically past
+          # STEER_ANGLE_MAX would otherwise get these heartbeats blocked too (same EPS timeout fault)
+          apply_steer = float(np.clip(CS.out.steeringAngleDeg,
+                                      -CarControllerParams.ANGLE_LIMITS.STEER_ANGLE_MAX,
+                                      CarControllerParams.ANGLE_LIMITS.STEER_ANGLE_MAX))
           apply_steer_req = False
 
         can_sends.append(subarucan.create_steering_control_angle(self.packer, apply_steer, apply_steer_req))
