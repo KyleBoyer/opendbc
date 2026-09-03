@@ -18,6 +18,15 @@ class CarState(CarStateBase, MadsCarState):
 
     self.angle_rate_calulator = CanSignalRateCalculator(50)
 
+  @staticmethod
+  def parse_gear_shifter(gear: str | None) -> structs.CarState.GearShifter:
+    # Global Subaru platforms report the selected ratio ("1" through "8")
+    # instead of "D" while the driver is using the manual shift controls.
+    if gear in ("1", "2", "3", "4", "5", "6", "7", "8"):
+      return structs.CarState.GearShifter.manumatic
+
+    return CarStateBase.parse_gear_shifter(gear)
+
   def update(self, can_parsers) -> tuple[structs.CarState, structs.CarStateSP]:
     cp = can_parsers[Bus.pt]
     cp_cam = can_parsers[Bus.cam]
