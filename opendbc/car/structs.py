@@ -122,6 +122,7 @@ class CarControlSP:
   leadOne: 'LeadData' = field(default_factory=lambda: LeadData())
   leadTwo: 'LeadData' = field(default_factory=lambda: LeadData())
   subaruDirectionalSteerOverride: bool = auto_field()
+  subaruExperimentalAutoParkingBrake: bool = auto_field()
 
   @auto_dataclass
   class Param:

@@ -17,6 +17,7 @@ class SubaruMsg(enum.IntEnum):
   Brake_Status      = 0x13c
   CruiseControl     = 0x240
   Throttle          = 0x40
+  Transmission      = 0x48
   Steering_Torque   = 0x119
   Steering_2        = 0x11a
   Wheel_Speeds      = 0x13a
@@ -110,6 +111,14 @@ class TestSubaruSafetyBase(common.PandaCarSafetyTest):
   def _user_gas_msg(self, gas):
     values = {"Throttle_Pedal": gas}
     return self.packer.make_can_msg_panda("Throttle", 0, values)
+
+  def _transmission_msg(self, gear):
+    values = {"Gear": gear}
+    return self.packer.make_can_msg_panda("Transmission", SUBARU_MAIN_BUS, values)
+
+  def _epb_msg(self, epb=True, cruise_throttle=INACTIVE_GAS):
+    values = {"Cruise_EPB": epb, "Cruise_Cancel": 0, "Cruise_Throttle": cruise_throttle}
+    return self.packer.make_can_msg_panda("ES_Distance", self.ALT_MAIN_BUS, values)
 
   def _pcm_status_msg(self, enable):
     values = {"Cruise_Activated": enable}
@@ -357,6 +366,40 @@ class TestSubaruGen2AngleStockLongitudinalSafety(TestSubaruStockLongitudinalSafe
   ALT_MAIN_BUS = SUBARU_ALT_BUS
 
   FLAGS = SubaruSafetyFlags.GEN2 | SubaruSafetyFlags.LKAS_ANGLE
+
+  def test_experimental_epb_rejected_without_platform_flag(self):
+    self._rx(self._transmission_msg(4))  # Park
+    self._rx(self._speed_msg(0))
+    self._rx(self._user_brake_msg(True))
+    self.assertFalse(self._tx(self._epb_msg()))
+
+
+class TestSubaruGen2AngleExperimentalEPBSafety(TestSubaruStockLongitudinalSafetyBase, TestSubaruAngleSafetyBase):
+  ALT_MAIN_BUS = SUBARU_ALT_BUS
+
+  FLAGS = SubaruSafetyFlags.GEN2 | SubaruSafetyFlags.LKAS_ANGLE | SubaruSafetyFlags.EXPERIMENTAL_EPB
+
+  def _set_epb_preconditions(self, gear=4, speed=0, brake=True):
+    self._rx(self._transmission_msg(gear))
+    self._rx(self._speed_msg(speed))
+    self._rx(self._user_brake_msg(brake))
+
+  def test_experimental_epb_allowed_only_parked_with_brake(self):
+    self._set_epb_preconditions()
+    self.assertTrue(self._tx(self._epb_msg()))
+
+    for gear, speed, brake in ((121, 0, True),   # Drive
+                               (3, 0, True),     # Reverse
+                               (4, 0.1, True),   # moving
+                               (4, 0, False)):
+      with self.subTest(gear=gear, speed=speed, brake=brake):
+        self._set_epb_preconditions(gear, speed, brake)
+        self.assertFalse(self._tx(self._epb_msg()))
+
+  def test_experimental_epb_requires_bit_and_inactive_throttle(self):
+    self._set_epb_preconditions()
+    self.assertFalse(self._tx(self._epb_msg(epb=False)))
+    self.assertFalse(self._tx(self._epb_msg(cruise_throttle=self.INACTIVE_GAS + 1)))
 
 
 class TestSubaruGen2LongitudinalSafety(TestSubaruLongitudinalSafetyBase, TestSubaruGen2TorqueSafetyBase):

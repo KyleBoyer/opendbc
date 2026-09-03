@@ -1,10 +1,12 @@
 import numpy as np
 from opendbc.can import CANPacker
-from opendbc.car import Bus, make_tester_present_msg
+from opendbc.car import Bus, make_tester_present_msg, structs
 from opendbc.car.lateral import apply_driver_steer_torque_limits, apply_std_steer_angle_limits, common_fault_avoidance
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.subaru import subarucan
-from opendbc.car.subaru.values import DBC, GLOBAL_ES_ADDR, CanBus, CarControllerParams, SubaruFlags
+from opendbc.car.subaru.values import CAR, DBC, GLOBAL_ES_ADDR, CanBus, CarControllerParams, SubaruFlags
+
+GearShifter = structs.CarState.GearShifter
 
 # FIXME: These limits aren't exact. The real limit is more than likely over a larger time period and
 # involves the total steering angle change rather than rate, but these limits work well for now
@@ -45,6 +47,11 @@ STEER_OVERRIDE_ANGLE_SIGN_FLOOR = 5.0  # deg
 # wire, and panda's reference is that 0, not our float state).
 LKAS_ANGLE_CAN_QUANT = 0.01  # deg per CAN unit
 
+# Unverified 0x221.Cruise_EPB experiment. Match the stock ES_Distance rate for one second; the
+# command stops immediately if Park, standstill, brake-pedal, or the UI opt-in stops being true.
+EXPERIMENTAL_EPB_STEP = 5
+EXPERIMENTAL_EPB_COMMAND_FRAMES = 20
+
 
 def _panda_angle_rate_clamp(apply_angle: float, apply_angle_last: float, v_ego: float) -> float:
   """Mirror panda's steer_angle_cmd_checks() rate bounds so an active frame can never be blocked.
@@ -84,13 +91,46 @@ class CarController(CarControllerBase):
     self.lkas_angle_yield = False
     self.driver_override = False
 
+    self.experimental_epb_supported = CP.carFingerprint == CAR.SUBARU_ASCENT_2023
+    self.experimental_epb_armed = False
+    self.experimental_epb_command_frames_left = 0
+
     self.p = CarControllerParams(CP)
     self.packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+
+  def _update_experimental_epb(self, enabled, CS):
+    gear = CS.out.gearShifter
+
+    # Arm only after seeing a motion gear. Preserve the arm through Neutral, since the physical
+    # selector may report it briefly while moving from Drive/Reverse into Park.
+    if gear in (GearShifter.drive, GearShifter.reverse, GearShifter.manumatic):
+      self.experimental_epb_armed = True
+      self.experimental_epb_command_frames_left = 0
+    elif gear == GearShifter.park:
+      stock_epb_set = bool(CS.es_distance_msg.get("Cruise_EPB", 0))
+      if (enabled and self.experimental_epb_supported and self.experimental_epb_armed and
+          CS.out.standstill and CS.out.brakePressed and not stock_epb_set):
+        self.experimental_epb_command_frames_left = EXPERIMENTAL_EPB_COMMAND_FRAMES
+      self.experimental_epb_armed = False
+    elif gear not in (GearShifter.neutral, GearShifter.unknown):
+      self.experimental_epb_armed = False
+
+    valid_command_state = (enabled and self.experimental_epb_supported and
+                           gear == GearShifter.park and CS.out.standstill and CS.out.brakePressed and
+                           not bool(CS.es_distance_msg.get("Cruise_EPB", 0)))
+    if not valid_command_state:
+      self.experimental_epb_command_frames_left = 0
+
+    send_command = self.experimental_epb_command_frames_left > 0 and self.frame % EXPERIMENTAL_EPB_STEP == 0
+    if send_command:
+      self.experimental_epb_command_frames_left -= 1
+    return send_command
 
   def update(self, CC, CC_SP, CS, now_nanos):
     actuators = CC.actuators
     hud_control = CC.hudControl
     pcm_cancel_cmd = CC.cruiseControl.cancel
+    experimental_epb_cmd = self._update_experimental_epb(CC_SP.subaruExperimentalAutoParkingBrake, CS)
 
     can_sends = []
 
@@ -240,7 +280,11 @@ class CarController(CarControllerBase):
           can_sends.append(subarucan.create_es_distance(self.packer, self.frame // 5, CS.es_distance_msg, 0, pcm_cancel_cmd,
                                                         self.CP.openpilotLongitudinalControl, cruise_brake > 0, cruise_throttle))
       else:
-        if pcm_cancel_cmd:
+        if experimental_epb_cmd:
+          can_sends.append(subarucan.create_es_distance(self.packer, CS.es_distance_msg["COUNTER"] + 1,
+                                                        CS.es_distance_msg, CanBus.alt, False,
+                                                        experimental_epb_cmd=True))
+        elif pcm_cancel_cmd:
           if not (self.CP.flags & SubaruFlags.HYBRID):
             bus = CanBus.alt if self.CP.flags & SubaruFlags.GLOBAL_GEN2 else CanBus.main
             can_sends.append(subarucan.create_es_distance(self.packer, CS.es_distance_msg["COUNTER"] + 1, CS.es_distance_msg, bus, pcm_cancel_cmd))

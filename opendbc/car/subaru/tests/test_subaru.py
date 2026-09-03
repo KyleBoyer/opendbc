@@ -7,7 +7,9 @@ from opendbc.car.subaru.carcontroller import (CarController, LKAS_ANGLE_MAX_ACTI
                                               STEER_OVERRIDE_TORQUE_HIGH, STEER_OVERRIDE_TORQUE_LOW)
 from opendbc.car.subaru.fingerprints import FW_VERSIONS
 from opendbc.car.subaru.interface import CarInterface
-from opendbc.car.subaru.values import CAR, CanBus, CarControllerParams, DBC
+from opendbc.car.subaru.values import CAR, CanBus, CarControllerParams, DBC, SubaruSafetyFlags
+
+GearShifter = structs.CarState.GearShifter
 
 
 class TestSubaruFingerprint:
@@ -374,7 +376,90 @@ class TestSubaruPandaRateSync:
     assert not panda_angle_check(output, 560., self.HWY_SPEED, False, 560.)
 
 
+class TestSubaruExperimentalAutoParkingBrake:
+  ES_DISTANCE_FIELDS = (
+    "CHECKSUM", "COUNTER", "Signal1", "Cruise_Fault", "Cruise_Throttle", "Signal2", "Car_Follow",
+    "Low_Speed_Follow", "Cruise_Soft_Disable", "Signal7", "Cruise_Brake_Active", "Distance_Swap",
+    "Cruise_EPB", "Signal4", "Close_Distance", "Signal5", "Cruise_Cancel", "Cruise_Set",
+    "Cruise_Resume", "Signal6",
+  )
+
+  def setup_method(self):
+    self.CP = CarInterface.get_non_essential_params(CAR.SUBARU_ASCENT_2023)
+    self.CP_SP = structs.CarParamsSP()
+    self.cc = CarController(DBC[self.CP.carFingerprint], self.CP, self.CP_SP)
+    self.parser = CANParser(DBC[self.CP.carFingerprint][Bus.pt], [("ES_Distance", 0)], CanBus.alt)
+
+  def _update(self, gear, *, enabled=True, standstill=True, brake_pressed=True, stock_epb=False, frame=1):
+    CC = structs.CarControl()
+    CC_SP = structs.CarControlSP()
+    CC_SP.subaruExperimentalAutoParkingBrake = enabled
+
+    car_state = structs.CarState()
+    car_state.gearShifter = gear
+    car_state.standstill = standstill
+    car_state.brakePressed = brake_pressed
+
+    class ControllerState:
+      pass
+
+    controller_state = ControllerState()
+    controller_state.out = car_state
+    controller_state.es_distance_msg = {field: 0 for field in self.ES_DISTANCE_FIELDS}
+    controller_state.es_distance_msg["Cruise_EPB"] = int(stock_epb)
+    self.cc.frame = frame
+    _, can_sends = self.cc.update(CC.as_reader(), CC_SP, controller_state, 0)
+    distance_sends = [msg for msg in can_sends if msg[0] == 0x221]
+    if distance_sends:
+      self.parser.update([0, distance_sends])
+      return dict(self.parser.vl["ES_Distance"])
+    return None
+
+  def test_drive_to_park_sends_epb_only_request(self):
+    assert self._update(GearShifter.drive) is None
+    msg = self._update(GearShifter.park, frame=5)
+    assert msg is not None
+    assert msg["Cruise_EPB"] == 1
+    assert msg["Cruise_Cancel"] == 0
+    assert msg["Cruise_Throttle"] == 1818
+
+  def test_neutral_between_motion_gear_and_park_preserves_trigger(self):
+    assert self._update(GearShifter.reverse) is None
+    assert self._update(GearShifter.neutral, frame=3) is None
+    assert self._update(GearShifter.park, frame=5)["Cruise_EPB"] == 1
+
+  def test_manual_drive_ratio_to_park_triggers(self):
+    assert self._update(GearShifter.manumatic) is None
+    assert self._update(GearShifter.park, frame=5)["Cruise_EPB"] == 1
+
+  @pytest.mark.parametrize("enabled,standstill,brake_pressed,stock_epb", [
+    (False, True, True, False),
+    (True, False, True, False),
+    (True, True, False, False),
+    (True, True, True, True),
+  ])
+  def test_guards_block_request(self, enabled, standstill, brake_pressed, stock_epb):
+    assert self._update(GearShifter.drive) is None
+    assert self._update(GearShifter.park, enabled=enabled, standstill=standstill,
+                        brake_pressed=brake_pressed, stock_epb=stock_epb, frame=5) is None
+
+  def test_starting_in_park_does_not_trigger(self):
+    assert self._update(GearShifter.park, frame=5) is None
+
+  def test_non_ascent_platform_is_blocked(self):
+    CP = CarInterface.get_non_essential_params(CAR.SUBARU_OUTBACK_2023)
+    self.cc = CarController(DBC[CP.carFingerprint], CP, structs.CarParamsSP())
+    assert self._update(GearShifter.drive) is None
+    assert self._update(GearShifter.park, frame=5) is None
+
+
 class TestSubaruParams:
   def test_ascent_steer_actuator_delays(self):
     assert CarInterface.get_non_essential_params(CAR.SUBARU_ASCENT).steerActuatorDelay == pytest.approx(0.3)
     assert CarInterface.get_non_essential_params(CAR.SUBARU_ASCENT_2023).steerActuatorDelay == pytest.approx(0.1)
+
+  def test_experimental_epb_safety_flag_is_ascent_2023_only(self):
+    ascent = CarInterface.get_non_essential_params(CAR.SUBARU_ASCENT_2023)
+    outback = CarInterface.get_non_essential_params(CAR.SUBARU_OUTBACK_2023)
+    assert ascent.safetyConfigs[0].safetyParam & SubaruSafetyFlags.EXPERIMENTAL_EPB
+    assert not outback.safetyConfigs[0].safetyParam & SubaruSafetyFlags.EXPERIMENTAL_EPB

@@ -65,6 +65,7 @@ class SubaruSafetyFlags(IntFlag):
   LONG = 2
   PREGLOBAL_REVERSED_DRIVER_TORQUE = 4
   LKAS_ANGLE = 8
+  EXPERIMENTAL_EPB = 16
 
 
 class SubaruFlags(IntFlag):

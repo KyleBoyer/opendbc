@@ -22,6 +22,7 @@
 #define MSG_SUBARU_Brake_Status          0x13cU
 #define MSG_SUBARU_CruiseControl         0x240U
 #define MSG_SUBARU_Throttle              0x40U
+#define MSG_SUBARU_Transmission          0x48U
 #define MSG_SUBARU_Steering_Torque       0x119U
 #define MSG_SUBARU_Steering_2            0x11aU
 #define MSG_SUBARU_Wheel_Speeds          0x13aU
@@ -88,6 +89,8 @@
 static bool subaru_gen2 = false;
 static bool subaru_longitudinal = false;
 static bool subaru_lkas_angle = false;
+static bool subaru_experimental_epb = false;
+static bool subaru_in_park = false;
 
 static uint32_t subaru_get_checksum(const CANPacket_t *msg) {
   return (uint8_t)msg->data[0];
@@ -177,6 +180,10 @@ static void subaru_rx_hook(const CANPacket_t *msg) {
   if ((msg->addr == MSG_SUBARU_Throttle) && (msg->bus == SUBARU_MAIN_BUS)) {
     gas_pressed = msg->data[4] != 0U;
   }
+
+  if ((msg->addr == MSG_SUBARU_Transmission) && (msg->bus == SUBARU_MAIN_BUS)) {
+    subaru_in_park = msg->data[3] == 4U;
+  }
 }
 
 static bool subaru_tx_hook(const CANPacket_t *msg) {
@@ -242,14 +249,19 @@ static bool subaru_tx_hook(const CANPacket_t *msg) {
   if (msg->addr == MSG_SUBARU_ES_Distance) {
     int cruise_throttle = (GET_BYTES(msg, 2, 2) & 0x1FFFU);
     bool cruise_cancel = (msg->data[7] >> 0) & 1U;
+    bool cruise_epb = GET_BIT(msg, 38U);
 
     if (subaru_longitudinal) {
       violation |= longitudinal_gas_checks(cruise_throttle, SUBARU_LONG_LIMITS);
     } else {
-      // If openpilot is not controlling long, only allow ES_Distance for cruise cancel requests,
-      // (when Cruise_Cancel is true, and Cruise_Throttle is inactive)
-      violation |= (cruise_throttle != SUBARU_LONG_LIMITS.inactive_gas);
-      violation |= (!cruise_cancel);
+      // Outside longitudinal control, preserve the existing cancel-only rule and narrowly allow the
+      // experimental EPB bit for the opted-in platform. Panda independently requires Park,
+      // standstill, and a pressed brake pedal; the high-level controller enforces the D/R -> P edge.
+      bool valid_cancel = cruise_cancel && (cruise_throttle == SUBARU_LONG_LIMITS.inactive_gas);
+      bool valid_experimental_epb = subaru_experimental_epb && cruise_epb && !cruise_cancel &&
+                                    (cruise_throttle == SUBARU_LONG_LIMITS.inactive_gas) &&
+                                    subaru_in_park && !vehicle_moving && brake_pressed;
+      violation |= !(valid_cancel || valid_experimental_epb);
     }
   }
 
@@ -314,11 +326,19 @@ static safety_config subaru_init(uint16_t param) {
     SUBARU_LKAS_ANGLE_RX_CHECKS(SUBARU_ALT_BUS)
   };
 
+  static RxCheck subaru_lkas_angle_epb_rx_checks[] = {
+    SUBARU_LKAS_ANGLE_RX_CHECKS(SUBARU_ALT_BUS)
+    {.msg = {{MSG_SUBARU_Transmission, SUBARU_MAIN_BUS, 8, 100U, .max_counter = 15U, .ignore_quality_flag = true}, { 0 }, { 0 }}},
+  };
+
   const uint16_t SUBARU_PARAM_GEN2 = 1;
   const uint16_t SUBARU_PARAM_LKAS_ANGLE = 8;
+  const uint16_t SUBARU_PARAM_EXPERIMENTAL_EPB = 16;
 
   subaru_gen2 = GET_FLAG(param, SUBARU_PARAM_GEN2);
   subaru_lkas_angle = GET_FLAG(param, SUBARU_PARAM_LKAS_ANGLE);
+  subaru_experimental_epb = subaru_gen2 && subaru_lkas_angle && GET_FLAG(param, SUBARU_PARAM_EXPERIMENTAL_EPB);
+  subaru_in_park = false;
 
 #ifdef ALLOW_DEBUG
   const uint16_t SUBARU_PARAM_LONGITUDINAL = 2;
@@ -327,7 +347,8 @@ static safety_config subaru_init(uint16_t param) {
 
   safety_config ret;
   if (subaru_lkas_angle) {
-    ret = BUILD_SAFETY_CFG(subaru_lkas_angle_rx_checks, subaru_lkas_angle_tx_msgs);
+    ret = subaru_experimental_epb ? BUILD_SAFETY_CFG(subaru_lkas_angle_epb_rx_checks, subaru_lkas_angle_tx_msgs) : \
+                                   BUILD_SAFETY_CFG(subaru_lkas_angle_rx_checks, subaru_lkas_angle_tx_msgs);
   } else if (subaru_gen2) {
     ret = subaru_longitudinal ? BUILD_SAFETY_CFG(subaru_gen2_rx_checks, SUBARU_GEN2_LONG_TX_MSGS) : \
                                 BUILD_SAFETY_CFG(subaru_gen2_rx_checks, SUBARU_GEN2_TX_MSGS);

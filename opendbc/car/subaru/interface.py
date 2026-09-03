@@ -35,6 +35,8 @@ class CarInterface(CarInterfaceBase):
         ret.safetyConfigs[0].safetyParam |= SubaruSafetyFlags.GEN2.value
       if ret.flags & SubaruFlags.LKAS_ANGLE:
         ret.safetyConfigs[0].safetyParam |= SubaruSafetyFlags.LKAS_ANGLE.value
+      if candidate == CAR.SUBARU_ASCENT_2023:
+        ret.safetyConfigs[0].safetyParam |= SubaruSafetyFlags.EXPERIMENTAL_EPB.value
 
     ret.steerLimitTimer = 0.4
     ret.steerActuatorDelay = 0.1
