@@ -144,4 +144,5 @@ class CarControlSP:
 
 @auto_dataclass
 class CarStateSP:
-  pass
+  subaruParkingBrakeReported: bool = auto_field()
+  subaruExperimentalParkingBrakeRequesting: bool = auto_field()

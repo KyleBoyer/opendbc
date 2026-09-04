@@ -3,7 +3,7 @@ from opendbc.can import CANDefine, CANParser
 from opendbc.car import Bus, structs
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.interfaces import CarStateBase
-from opendbc.car.subaru.values import DBC, CanBus, SubaruFlags
+from opendbc.car.subaru.values import CAR, DBC, CanBus, SubaruFlags
 from opendbc.car import CanSignalRateCalculator
 
 from opendbc.sunnypilot.car.subaru.mads import MadsCarState
@@ -45,6 +45,10 @@ class CarState(CarStateBase, MadsCarState):
     cp_es_distance = cp_alt if self.CP.flags & (SubaruFlags.GLOBAL_GEN2 | SubaruFlags.HYBRID) else cp_cam
     if not (self.CP.flags & SubaruFlags.HYBRID):
       eyesight_fault = bool(cp_es_distance.vl["ES_Distance"]["Cruise_Fault"])
+      if self.CP.carFingerprint == CAR.SUBARU_ASCENT_2023:
+        # This is the only identified EPB-related stock signal on this platform. Expose it separately
+        # from our outgoing experimental request so the onroad UI can show what the car reports.
+        ret_sp.subaruParkingBrakeReported = bool(cp_es_distance.vl["ES_Distance"]["Cruise_EPB"])
 
       # if openpilot is controlling long, an eyesight fault is a non-critical fault. otherwise it's an ACC fault
       if self.CP.openpilotLongitudinalControl:

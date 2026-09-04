@@ -99,6 +99,12 @@ class CarController(CarControllerBase):
     self.packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
 
   def _update_experimental_epb(self, enabled, CS):
+    if not self.experimental_epb_supported:
+      self.experimental_epb_armed = False
+      self.experimental_epb_command_frames_left = 0
+      self.experimental_parking_brake_requesting = False
+      return False
+
     gear = CS.out.gearShifter
 
     # Arm only after seeing a motion gear. Preserve the arm through Neutral, since the physical
@@ -121,7 +127,8 @@ class CarController(CarControllerBase):
     if not valid_command_state:
       self.experimental_epb_command_frames_left = 0
 
-    send_command = self.experimental_epb_command_frames_left > 0 and self.frame % EXPERIMENTAL_EPB_STEP == 0
+    self.experimental_parking_brake_requesting = self.experimental_epb_command_frames_left > 0
+    send_command = self.experimental_parking_brake_requesting and self.frame % EXPERIMENTAL_EPB_STEP == 0
     if send_command:
       self.experimental_epb_command_frames_left -= 1
     return send_command

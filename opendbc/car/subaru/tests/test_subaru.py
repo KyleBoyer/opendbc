@@ -1,7 +1,8 @@
 import pytest
 
-from opendbc.can import CANParser
+from opendbc.can import CANPacker, CANParser
 from opendbc.car import Bus, structs
+from opendbc.car.can_definitions import CanData
 from opendbc.car.lateral import apply_std_steer_angle_limits
 from opendbc.car.subaru.carcontroller import (CarController, LKAS_ANGLE_MAX_ACTIVE, LKAS_ANGLE_YIELD_RELEASE,
                                               STEER_OVERRIDE_TORQUE_HIGH, STEER_OVERRIDE_TORQUE_LOW)
@@ -417,11 +418,21 @@ class TestSubaruExperimentalAutoParkingBrake:
 
   def test_drive_to_park_sends_epb_only_request(self):
     assert self._update(GearShifter.drive) is None
+    assert not self.cc.experimental_parking_brake_requesting
     msg = self._update(GearShifter.park, frame=5)
     assert msg is not None
+    assert self.cc.experimental_parking_brake_requesting
     assert msg["Cruise_EPB"] == 1
     assert msg["Cruise_Cancel"] == 0
     assert msg["Cruise_Throttle"] == 1818
+
+  def test_request_indicator_clears_when_guard_changes(self):
+    assert self._update(GearShifter.drive) is None
+    assert self._update(GearShifter.park, frame=5) is not None
+    assert self.cc.experimental_parking_brake_requesting
+
+    assert self._update(GearShifter.park, brake_pressed=False, frame=6) is None
+    assert not self.cc.experimental_parking_brake_requesting
 
   def test_neutral_between_motion_gear_and_park_preserves_trigger(self):
     assert self._update(GearShifter.reverse) is None
@@ -463,3 +474,17 @@ class TestSubaruParams:
     outback = CarInterface.get_non_essential_params(CAR.SUBARU_OUTBACK_2023)
     assert ascent.safetyConfigs[0].safetyParam & SubaruSafetyFlags.EXPERIMENTAL_EPB
     assert not outback.safetyConfigs[0].safetyParam & SubaruSafetyFlags.EXPERIMENTAL_EPB
+
+
+class TestSubaruParkingBrakeReportedSignal:
+  def test_cruise_epb_is_exposed_separately_from_request(self):
+    CP = CarInterface.get_non_essential_params(CAR.SUBARU_ASCENT_2023)
+    CI = CarInterface(CP, structs.CarParamsSP())
+    CI.update([])  # CarState's first update lazily registers the DBC messages it reads.
+
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+    address, dat, source = packer.make_can_msg("ES_Distance", CanBus.alt, {"Cruise_EPB": 1, "COUNTER": 1})
+    _, CS_SP = CI.update([(1_000_000_000, [CanData(address, dat, source)])])
+
+    assert CS_SP.subaruParkingBrakeReported
+    assert not CS_SP.subaruExperimentalParkingBrakeRequesting

@@ -406,6 +406,7 @@ class CarControllerBase(ABC):
     self.CP_SP = CP_SP
     self.frame = 0
     self.secoc_key: bytes = b"00" * 16
+    self.experimental_parking_brake_requesting = False
 
   @abstractmethod
   def update(self, CC: structs.CarControl, CC_SP: structs.CarControlSP, CS: CarStateBase, now_nanos: int) -> tuple[structs.CarControl.Actuators, list[CanData]]:
