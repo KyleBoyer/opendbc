@@ -400,6 +400,7 @@ class TestSubaruExperimentalAutoParkingBrake:
     car_state.gearShifter = gear
     car_state.standstill = standstill
     car_state.brakePressed = brake_pressed
+    car_state.parkingBrake = stock_epb
 
     class ControllerState:
       pass
@@ -407,7 +408,6 @@ class TestSubaruExperimentalAutoParkingBrake:
     controller_state = ControllerState()
     controller_state.out = car_state
     controller_state.es_distance_msg = {field: 0 for field in self.ES_DISTANCE_FIELDS}
-    controller_state.es_distance_msg["Cruise_EPB"] = int(stock_epb)
     self.cc.frame = frame
     _, can_sends = self.cc.update(CC.as_reader(), CC_SP, controller_state, 0)
     distance_sends = [msg for msg in can_sends if msg[0] == 0x221]
@@ -477,14 +477,15 @@ class TestSubaruParams:
 
 
 class TestSubaruParkingBrakeReportedSignal:
-  def test_cruise_epb_is_exposed_separately_from_request(self):
+  def test_brake_status_is_exposed_separately_from_request(self):
     CP = CarInterface.get_non_essential_params(CAR.SUBARU_ASCENT_2023)
     CI = CarInterface(CP, structs.CarParamsSP())
     CI.update([])  # CarState's first update lazily registers the DBC messages it reads.
 
     packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
-    address, dat, source = packer.make_can_msg("ES_Distance", CanBus.alt, {"Cruise_EPB": 1, "COUNTER": 1})
+    address, dat, source = packer.make_can_msg("Brake_Status_2", CanBus.main, {"Parking_Brake": 1, "COUNTER": 1})
     _, CS_SP = CI.update([(1_000_000_000, [CanData(address, dat, source)])])
 
+    assert CI.CS.out.parkingBrake
     assert CS_SP.subaruParkingBrakeReported
     assert not CS_SP.subaruExperimentalParkingBrakeRequesting

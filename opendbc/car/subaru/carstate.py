@@ -46,9 +46,10 @@ class CarState(CarStateBase, MadsCarState):
     if not (self.CP.flags & SubaruFlags.HYBRID):
       eyesight_fault = bool(cp_es_distance.vl["ES_Distance"]["Cruise_Fault"])
       if self.CP.carFingerprint == CAR.SUBARU_ASCENT_2023:
-        # This is the only identified EPB-related stock signal on this platform. Expose it separately
-        # from our outgoing experimental request so the onroad UI can show what the car reports.
-        ret_sp.subaruParkingBrakeReported = bool(cp_es_distance.vl["ES_Distance"]["Cruise_EPB"])
+        # 0x32B bit 35 rises for both a manual EPB application and the stock AVH-to-EPB handoff.
+        # Keep this actual brake state separate from the outgoing 0x221.Cruise_EPB request bit.
+        ret.parkingBrake = bool(cp.vl["Brake_Status_2"]["Parking_Brake"])
+        ret_sp.subaruParkingBrakeReported = ret.parkingBrake
 
       # if openpilot is controlling long, an eyesight fault is a non-critical fault. otherwise it's an ACC fault
       if self.CP.openpilotLongitudinalControl:

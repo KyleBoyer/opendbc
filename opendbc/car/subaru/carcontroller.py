@@ -113,9 +113,8 @@ class CarController(CarControllerBase):
       self.experimental_epb_armed = True
       self.experimental_epb_command_frames_left = 0
     elif gear == GearShifter.park:
-      stock_epb_set = bool(CS.es_distance_msg.get("Cruise_EPB", 0))
       if (enabled and self.experimental_epb_supported and self.experimental_epb_armed and
-          CS.out.standstill and CS.out.brakePressed and not stock_epb_set):
+          CS.out.standstill and CS.out.brakePressed and not CS.out.parkingBrake):
         self.experimental_epb_command_frames_left = EXPERIMENTAL_EPB_COMMAND_FRAMES
       self.experimental_epb_armed = False
     elif gear not in (GearShifter.neutral, GearShifter.unknown):
@@ -123,7 +122,7 @@ class CarController(CarControllerBase):
 
     valid_command_state = (enabled and self.experimental_epb_supported and
                            gear == GearShifter.park and CS.out.standstill and CS.out.brakePressed and
-                           not bool(CS.es_distance_msg.get("Cruise_EPB", 0)))
+                           not CS.out.parkingBrake)
     if not valid_command_state:
       self.experimental_epb_command_frames_left = 0
 

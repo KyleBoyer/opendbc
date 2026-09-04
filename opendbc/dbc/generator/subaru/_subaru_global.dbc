@@ -62,6 +62,13 @@ BO_ 316 Brake_Status: 8 XXX
  SG_ Brake : 62|1@1+ (1,0) [0|1] "" XXX
  SG_ Signal3 : 63|1@1+ (1,0) [0|1] "" XXX
 
+BO_ 811 Brake_Status_2: 8 XXX
+ SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" XXX
+ SG_ COUNTER : 8|4@1+ (1,0) [0|15] "" XXX
+ SG_ Signal1 : 12|23@1+ (1,0) [0|8388607] "" XXX
+ SG_ Parking_Brake : 35|1@1+ (1,0) [0|1] "" XXX
+ SG_ Signal2 : 36|28@1+ (1,0) [0|268435455] "" XXX
+
 BO_ 326 Cruise_Buttons: 8 XXX
  SG_ CHECKSUM : 0|8@1+ (1,0) [0|255] "" XXX
  SG_ COUNTER : 8|4@1+ (1,0) [0|15] "" XXX
@@ -279,6 +286,7 @@ BO_ 289 ES_STATIC_2: 8 XXX
 
 CM_ SG_ 64 Throttle_Combo "Throttle Cruise + Pedal";
 CM_ SG_ 313 Brake_Lights "Driver or Cruise Brake on";
+CM_ SG_ 811 Parking_Brake "Observed set during manual EPB application and the stock AVH-to-EPB timeout on a 2023 Ascent";
 CM_ SG_ 544 Cruise_Brake_Lights "1 = switch on brake lights";
 CM_ SG_ 544 Brake_Pressure "Winds down after cruise disabled. Also can be non-zero when likely preparing for AEB";
 CM_ SG_ 544 Signal3 "Usually goes to 2 if AEB_Status is 4";
