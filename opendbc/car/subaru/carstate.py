@@ -98,6 +98,12 @@ class CarState(CarStateBase, MadsCarState):
     steer_threshold = 75 if self.CP.flags & SubaruFlags.PREGLOBAL else 80
     ret.steeringPressed = abs(ret.steeringTorque) > steer_threshold
 
+    if not (self.CP.flags & SubaruFlags.PREGLOBAL):
+      # EyeSight keeps publishing ES_DashStatus while it is blinded (eg direct sunlight), but the
+      # cruise bits in it are not trustworthy: Cruise_On has been seen rising with no driver input.
+      # Report the state so MADS can refuse to auto engage off that edge.
+      ret_sp.subaruEyesightSoftDisable = bool(cp_cam.vl["ES_DashStatus"]["Cruise_Soft_Disable"])
+
     cp_cruise = cp_alt if self.CP.flags & SubaruFlags.GLOBAL_GEN2 else cp
     cp_es_brake = cp_alt if self.CP.flags & SubaruFlags.GLOBAL_GEN2 else cp_cam
     if self.CP.flags & SubaruFlags.LKAS_ANGLE:

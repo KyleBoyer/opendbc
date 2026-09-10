@@ -489,3 +489,29 @@ class TestSubaruParkingBrakeReportedSignal:
     assert CI.CS.out.parkingBrake
     assert CS_SP.subaruParkingBrakeReported
     assert not CS_SP.subaruExperimentalParkingBrakeRequesting
+
+
+class TestSubaruEyesightSoftDisableSignal:
+  @staticmethod
+  def _send_dash_status(soft_disable):
+    CP = CarInterface.get_non_essential_params(CAR.SUBARU_ASCENT_2023)
+    CI = CarInterface(CP, structs.CarParamsSP())
+    CI.update([])  # CarState's first update lazily registers the DBC messages it reads.
+
+    packer = CANPacker(DBC[CP.carFingerprint][Bus.pt])
+    address, dat, source = packer.make_can_msg("ES_DashStatus", CanBus.camera,
+                                               {"Cruise_On": 1, "Cruise_Soft_Disable": soft_disable, "COUNTER": 1})
+    return CI, CI.update([(1_000_000_000, [CanData(address, dat, source)])])[1]
+
+  def test_soft_disable_is_reported(self):
+    CI, CS_SP = self._send_dash_status(1)
+
+    assert CS_SP.subaruEyesightSoftDisable
+    # Cruise_On is still reported as-is; only MADS engagement reacts to the soft disable
+    assert CI.CS.out.cruiseState.available
+
+  def test_healthy_eyesight_clears_the_flag(self):
+    CI, CS_SP = self._send_dash_status(0)
+
+    assert not CS_SP.subaruEyesightSoftDisable
+    assert CI.CS.out.cruiseState.available

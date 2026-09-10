@@ -146,3 +146,4 @@ class CarControlSP:
 class CarStateSP:
   subaruParkingBrakeReported: bool = auto_field()
   subaruExperimentalParkingBrakeRequesting: bool = auto_field()
+  subaruEyesightSoftDisable: bool = auto_field()
